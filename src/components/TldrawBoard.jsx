@@ -15,6 +15,9 @@ const AI_AGENT_NAME = "AaaS Copilot";
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
 const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
 
+// Debug mode: Set to true to see detailed pipeline logs
+const DEBUG_MODE = false;
+
 // -----------------------------------------------------------------------------
 // 🛠️ HELPER FUNCTIONS (Moved to Top for Safety)
 // -----------------------------------------------------------------------------
@@ -22,9 +25,10 @@ const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/ge
 const extractDataFromShape = (editor, shape) => {
     if (!shape) return null;
 
-    console.log(`📦 Extracting data from ${shape.type} (${shape.id})`);
-    console.log(`   Props keys:`, Object.keys(shape.props || {}));
-    console.log(`   Props.text:`, shape.props?.text);
+    if (DEBUG_MODE) {
+        console.log(`📦 Extracting data from ${shape.type} (${shape.id})`);
+        console.log(`   Full arrow.props:`, JSON.stringify(shape.props, null, 2));
+    }
 
     // 1. Image Shape
     if (shape.type === 'image') {
@@ -61,27 +65,27 @@ const extractDataFromShape = (editor, shape) => {
         if (util && util.getText) {
             const text = util.getText(shape);
             if (text && text.trim()) {
-                console.log(`   ✅ Extracted via util.getText: "${text.substring(0, 50)}..."`);
+                if (DEBUG_MODE) console.log(`   ✅ Extracted via util.getText: "${text.substring(0, 50)}..."`);
                 return { type: 'text', text: text };
             }
         }
     } catch (e) {
-        console.warn('   getText util failed:', e.message);
+        if (DEBUG_MODE) console.warn('   getText util failed:', e.message);
     }
 
     // Fallback: Direct props.text access
     if (shape.props && typeof shape.props.text === 'string') {
         if (!shape.props.text.trim()) return null; // Ignore empty text
-        console.log(`   ✅ Extracted via props.text: "${shape.props.text.substring(0, 50)}..."`);
+        if (DEBUG_MODE) console.log(`   ✅ Extracted via props.text: "${shape.props.text.substring(0, 50)}..."`);
         return { type: 'text', text: shape.props.text };
     }
 
-    console.warn(`   ❌ No text extraction method worked for ${shape.type}`);
+    if (DEBUG_MODE) console.warn(`   ❌ No text extraction method worked for ${shape.type}`);
     return null;
 };
 
 const getUpstreamData = (editor, agentId) => {
-    console.log(`🚀 getUpstreamData called for ${agentId}`);
+    if (DEBUG_MODE) console.log(`🚀 getUpstreamData called for ${agentId}`);
     const inputs = [];
     const agentShape = editor.getShape(agentId);
     if (!agentShape) {
@@ -90,20 +94,22 @@ const getUpstreamData = (editor, agentId) => {
     }
 
     const agentBounds = editor.getShapePageBounds(agentId);
-    if (!agentBounds) console.warn("⚠️ Agent bounds could not be determined (might affect geometric check)");
+    if (!agentBounds && DEBUG_MODE) console.warn("⚠️ Agent bounds could not be determined");
 
     const allShapes = editor.getCurrentPageShapes();
     const arrows = allShapes.filter(s => s.type === 'arrow');
 
-    console.log(`🔍 Checking ${arrows.length} arrows...`);
+    if (DEBUG_MODE) console.log(`🔍 Checking ${arrows.length} arrows...`);
 
     for (const arrow of arrows) {
         let isConnectedToAgent = false;
         let sourceShapeId = null;
 
-        console.log(`🔎 Inspecting arrow ${arrow.id}:`);
-        console.log(`   Full arrow.props:`, JSON.stringify(arrow.props, null, 2));
-        console.log(`   arrow.x: ${arrow.x}, arrow.y: ${arrow.y}`);
+        if (DEBUG_MODE) {
+            console.log(`🔎 Inspecting arrow ${arrow.id}:`);
+            console.log(`   Full arrow.props:`, JSON.stringify(arrow.props, null, 2));
+            console.log(`   arrow.x: ${arrow.x}, arrow.y: ${arrow.y}`);
+        }
 
         // -------------------------------------------------------------
         // 1. END POINT CHECK (Arrow Tip -> Agent?)
@@ -111,7 +117,7 @@ const getUpstreamData = (editor, agentId) => {
 
         // Check 1: Strict Binding (if available)
         if (arrow.props.end?.type === 'binding' && arrow.props.end?.boundShapeId === agentId) {
-            console.log(`🔗 Arrow ${arrow.id} Tip is STRICTLY BOUND to Agent`);
+            if (DEBUG_MODE) console.log(`🔗 Arrow ${arrow.id} Tip is STRICTLY BOUND to Agent`);
             isConnectedToAgent = true;
         }
         // Check 2: Geometric check (works for all arrow types)
@@ -121,12 +127,12 @@ const getUpstreamData = (editor, agentId) => {
             const endY = arrow.y + (arrow.props.end.y || 0);
             const buffer = 100;
 
-            console.log(`📏 Checking geometry: Tip (${Math.round(endX)}, ${Math.round(endY)}) vs Agent bounds`);
+            if (DEBUG_MODE) console.log(`📏 Checking geometry: Tip (${Math.round(endX)}, ${Math.round(endY)}) vs Agent bounds`);
 
             if (endX >= agentBounds.x - buffer && endX <= agentBounds.x + agentBounds.w + buffer &&
                 endY >= agentBounds.y - buffer && endY <= agentBounds.y + agentBounds.h + buffer) {
                 isConnectedToAgent = true;
-                console.log("✅ TIP HIT DETECTED (Geometry)!");
+                if (DEBUG_MODE) console.log("✅ TIP HIT DETECTED (Geometry)!");
             }
         }
 
@@ -141,7 +147,7 @@ const getUpstreamData = (editor, agentId) => {
         // Check 1: Strict Binding (if available)
         if (arrow.props.start?.type === 'binding' && arrow.props.start?.boundShapeId) {
             sourceShapeId = arrow.props.start.boundShapeId;
-            console.log(`🔗 Arrow ${arrow.id} Start is BOUND to ${sourceShapeId}`);
+            if (DEBUG_MODE) console.log(`🔗 Arrow ${arrow.id} Start is BOUND to ${sourceShapeId}`);
         }
         // Check 2: Geometric scan (works for all arrow types)
         else if (arrow.props.start) {
@@ -149,7 +155,7 @@ const getUpstreamData = (editor, agentId) => {
             const startY = arrow.y + (arrow.props.start.y || 0);
             const buffer = 300; // SUPER MAGNET TOLERANCE
 
-            console.log(`📏 Check Arrow Tail: (${Math.round(startX)}, ${Math.round(startY)}) with 300px Magnet...`);
+            if (DEBUG_MODE) console.log(`📏 Check Arrow Tail: (${Math.round(startX)}, ${Math.round(startY)}) with 300px Magnet...`);
 
             const otherShapes = allShapes.filter(s => s.id !== arrow.id && s.id !== agentId && s.type !== 'arrow');
 
@@ -178,8 +184,8 @@ const getUpstreamData = (editor, agentId) => {
 
             if (closestShape) {
                 sourceShapeId = closestShape.id;
-                console.log(`🧲 MAGNET ATTRACTED: ${closestShape.type} (${closestShape.id}) Dist: ~${Math.round(minDist)}px`);
-            } else {
+                if (DEBUG_MODE) console.log(`🧲 MAGNET ATTRACTED: ${closestShape.type} (${closestShape.id}) Dist: ~${Math.round(minDist)}px`);
+            } else if (DEBUG_MODE) {
                 console.log("❌ TAIL MISS (Even with 300px magnet)");
             }
         }
@@ -189,7 +195,7 @@ const getUpstreamData = (editor, agentId) => {
             const data = extractDataFromShape(editor, sourceShape);
             if (data) {
                 inputs.push({ ...data, sourceId: sourceShape.id });
-                console.log(`✨ PIPE CONNECTED: ${sourceShape.type} -> Agent`);
+                console.log(`✨ ${sourceShape.type} → Agent`);
             } else {
                 console.warn(`⚠️ Connected shape ${sourceShape.type} produced no data.`);
             }
@@ -292,27 +298,51 @@ const runAgentTask = async (editor, agentId) => {
             });
         }
 
-        const body = { contents: [{ parts }] };
-        const res = await fetch(`${API_ENDPOINT}?key=${API_KEY}`, {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
-        });
-        const data = await res.json();
+        let outputText = "";
 
-        let outputText = "Error processing";
-        if (data.error) {
-            outputText = `API Error: ${data.error.message}`;
-        } else if (data.candidates && data.candidates[0]) {
-            outputText = data.candidates[0].content.parts[0].text;
+        try {
+            const body = { contents: [{ parts }] };
+            const res = await fetch(`${API_ENDPOINT}?key=${API_KEY}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
 
-            // Try to extract JSON image/structure if present
-            try {
-                const jsonMatch = outputText.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    const parsed = JSON.parse(jsonMatch[0]);
-                    if (parsed.image) outputText = parsed.image;
-                    else outputText = JSON.stringify(parsed, null, 2);
+            // Check HTTP status
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(errorData.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            const data = await res.json();
+
+            if (data.error) {
+                throw new Error(data.error.message);
+            } else if (data.candidates && data.candidates[0]) {
+                outputText = data.candidates[0].content.parts[0].text;
+
+                // Try to extract JSON image/structure if present
+                try {
+                    const jsonMatch = outputText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        const parsed = JSON.parse(jsonMatch[0]);
+                        if (parsed.image) outputText = parsed.image;
+                        else outputText = JSON.stringify(parsed, null, 2);
+                    }
+                } catch (e) {
+                    // JSON parsing failed, use raw text
                 }
-            } catch (e) { }
+            } else {
+                throw new Error("No response from AI");
+            }
+        } catch (error) {
+            console.error("❌ AI Agent Error:", error);
+            outputText = `⚠️ Error: ${error.message}\n\nPlease check:\n- API key is valid\n- Network connection\n- Input data format`;
+
+            // Show user-friendly alert for critical errors
+            if (error.message.includes("API key") || error.message.includes("403")) {
+                alert("🔑 API Key Error\n\nYour Gemini API key may be invalid or expired.\nPlease check your .env file.");
+            }
         }
 
         // Create Output
