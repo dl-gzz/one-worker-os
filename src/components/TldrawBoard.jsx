@@ -3,21 +3,218 @@ import { Tldraw, useEditor, createShapeId, BaseBoxShapeUtil, HTMLContainer } fro
 import 'tldraw/tldraw.css';
 import { QuizShapeUtil } from './shapes/QuizShape';
 import { CameraSimulatorShapeUtil } from './shapes/CameraSimulatorShape';
+import { CodeRunnerShapeUtil } from './shapes/CodeRunnerShape';
+import { BrowserShapeUtil } from './shapes/BrowserShape';
 
 // -----------------------------------------------------------------------------
 // 🧠 AI / OS CONFIGURATION
 // -----------------------------------------------------------------------------
 const AI_AGENT_NAME = "AaaS Copilot";
-const API_KEY = "AIzaSyDL8ss39qMOJdCjU_APXO7rlcoS55PdznI";
-const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent";
+// ⚠️ SECURITY: Never commit API keys to git! Use environment variables instead.
+// Create a .env file in the project root with: VITE_GEMINI_API_KEY=your_key_here
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
+const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
 
 // -----------------------------------------------------------------------------
 // 🛠️ HELPER FUNCTIONS (Moved to Top for Safety)
 // -----------------------------------------------------------------------------
 
+const extractDataFromShape = (editor, shape) => {
+    if (!shape) return null;
+
+    console.log(`📦 Extracting data from ${shape.type} (${shape.id})`);
+    console.log(`   Props keys:`, Object.keys(shape.props || {}));
+    console.log(`   Props.text:`, shape.props?.text);
+
+    // 1. Image Shape
+    if (shape.type === 'image') {
+        try {
+            const asset = editor.getAsset(shape.props.assetId);
+            if (asset && asset.props.src) {
+                const base64Data = asset.props.src.split(',')[1] || asset.props.src;
+                const mimeType = asset.props.mimeType || 'image/png';
+                return { type: 'image', data: base64Data, mimeType, name: asset.props.name };
+            }
+        } catch (e) { console.warn('Image extraction failed', e); }
+        return null;
+    }
+
+    // 2. Browser Shape
+    if (shape.type === 'browser') {
+        return { type: 'text', text: `[Browser Context] URL: ${shape.props.url}` };
+    }
+
+    // 3. Code Runner
+    if (shape.type === 'code_runner') {
+        let content = `[Code Context]\nCode:\n${shape.props.code}`;
+        if (shape.props.output && shape.props.output.length > 0) {
+            const lastOutput = shape.props.output[shape.props.output.length - 1];
+            content += `\n\nLast Output: ${lastOutput.text}`;
+        }
+        return { type: 'text', text: content };
+    }
+
+    // 4. Generic Text Handlers (Note, Text, Geo/Rectangle)
+    // Try using the editor's getText utility first
+    try {
+        const util = editor.getShapeUtil(shape);
+        if (util && util.getText) {
+            const text = util.getText(shape);
+            if (text && text.trim()) {
+                console.log(`   ✅ Extracted via util.getText: "${text.substring(0, 50)}..."`);
+                return { type: 'text', text: text };
+            }
+        }
+    } catch (e) {
+        console.warn('   getText util failed:', e.message);
+    }
+
+    // Fallback: Direct props.text access
+    if (shape.props && typeof shape.props.text === 'string') {
+        if (!shape.props.text.trim()) return null; // Ignore empty text
+        console.log(`   ✅ Extracted via props.text: "${shape.props.text.substring(0, 50)}..."`);
+        return { type: 'text', text: shape.props.text };
+    }
+
+    console.warn(`   ❌ No text extraction method worked for ${shape.type}`);
+    return null;
+};
+
+const getUpstreamData = (editor, agentId) => {
+    console.log(`🚀 getUpstreamData called for ${agentId}`);
+    const inputs = [];
+    const agentShape = editor.getShape(agentId);
+    if (!agentShape) {
+        console.warn("⚠️ Agent shape not found in editor");
+        return [];
+    }
+
+    const agentBounds = editor.getShapePageBounds(agentId);
+    if (!agentBounds) console.warn("⚠️ Agent bounds could not be determined (might affect geometric check)");
+
+    const allShapes = editor.getCurrentPageShapes();
+    const arrows = allShapes.filter(s => s.type === 'arrow');
+
+    console.log(`🔍 Checking ${arrows.length} arrows...`);
+
+    for (const arrow of arrows) {
+        let isConnectedToAgent = false;
+        let sourceShapeId = null;
+
+        console.log(`🔎 Inspecting arrow ${arrow.id}:`);
+        console.log(`   Full arrow.props:`, JSON.stringify(arrow.props, null, 2));
+        console.log(`   arrow.x: ${arrow.x}, arrow.y: ${arrow.y}`);
+
+        // -------------------------------------------------------------
+        // 1. END POINT CHECK (Arrow Tip -> Agent?)
+        // -------------------------------------------------------------
+
+        // Check 1: Strict Binding (if available)
+        if (arrow.props.end?.type === 'binding' && arrow.props.end?.boundShapeId === agentId) {
+            console.log(`🔗 Arrow ${arrow.id} Tip is STRICTLY BOUND to Agent`);
+            isConnectedToAgent = true;
+        }
+        // Check 2: Geometric check (works for all arrow types)
+        else if (agentBounds && arrow.props.end) {
+            // Try to get coordinates - handle both point type and direct x/y
+            const endX = arrow.x + (arrow.props.end.x || 0);
+            const endY = arrow.y + (arrow.props.end.y || 0);
+            const buffer = 100;
+
+            console.log(`📏 Checking geometry: Tip (${Math.round(endX)}, ${Math.round(endY)}) vs Agent bounds`);
+
+            if (endX >= agentBounds.x - buffer && endX <= agentBounds.x + agentBounds.w + buffer &&
+                endY >= agentBounds.y - buffer && endY <= agentBounds.y + agentBounds.h + buffer) {
+                isConnectedToAgent = true;
+                console.log("✅ TIP HIT DETECTED (Geometry)!");
+            }
+        }
+
+        if (!isConnectedToAgent) {
+            continue;
+        }
+
+        // -------------------------------------------------------------
+        // 2. START POINT CHECK (Arrow Tail -> Source?)
+        // -------------------------------------------------------------
+
+        // Check 1: Strict Binding (if available)
+        if (arrow.props.start?.type === 'binding' && arrow.props.start?.boundShapeId) {
+            sourceShapeId = arrow.props.start.boundShapeId;
+            console.log(`🔗 Arrow ${arrow.id} Start is BOUND to ${sourceShapeId}`);
+        }
+        // Check 2: Geometric scan (works for all arrow types)
+        else if (arrow.props.start) {
+            const startX = arrow.x + (arrow.props.start.x || 0);
+            const startY = arrow.y + (arrow.props.start.y || 0);
+            const buffer = 300; // SUPER MAGNET TOLERANCE
+
+            console.log(`📏 Check Arrow Tail: (${Math.round(startX)}, ${Math.round(startY)}) with 300px Magnet...`);
+
+            const otherShapes = allShapes.filter(s => s.id !== arrow.id && s.id !== agentId && s.type !== 'arrow');
+
+            let closestShape = null;
+            let minDist = Infinity;
+
+            for (const s of otherShapes) {
+                const b = editor.getShapePageBounds(s.id);
+                if (!b) continue;
+
+                // Check intersection with HUGE buffer
+                if (startX >= b.x - buffer && startX <= b.x + b.w + buffer &&
+                    startY >= b.y - buffer && startY <= b.y + b.h + buffer) {
+
+                    // Find the closest one among candidates
+                    const centerX = b.x + b.w / 2;
+                    const centerY = b.y + b.h / 2;
+                    const dist = Math.sqrt(Math.pow(centerX - startX, 2) + Math.pow(centerY - startY, 2));
+
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closestShape = s;
+                    }
+                }
+            }
+
+            if (closestShape) {
+                sourceShapeId = closestShape.id;
+                console.log(`🧲 MAGNET ATTRACTED: ${closestShape.type} (${closestShape.id}) Dist: ~${Math.round(minDist)}px`);
+            } else {
+                console.log("❌ TAIL MISS (Even with 300px magnet)");
+            }
+        }
+
+        if (sourceShapeId) {
+            const sourceShape = editor.getShape(sourceShapeId);
+            const data = extractDataFromShape(editor, sourceShape);
+            if (data) {
+                inputs.push({ ...data, sourceId: sourceShape.id });
+                console.log(`✨ PIPE CONNECTED: ${sourceShape.type} -> Agent`);
+            } else {
+                console.warn(`⚠️ Connected shape ${sourceShape.type} produced no data.`);
+            }
+        }
+    }
+
+    return inputs;
+};
+
 const runAgentTask = async (editor, agentId) => {
     const agentShape = editor.getShape(agentId);
     if (!agentShape || agentShape.type !== 'ai_agent') return;
+
+    // Security check: Ensure API key is configured
+    if (!API_KEY || API_KEY.trim() === '') {
+        console.error('❌ API_KEY is not configured! Please set VITE_GEMINI_API_KEY in your .env file.');
+        console.error('📖 See SECURITY_SETUP.md for instructions.');
+        editor.updateShape({
+            id: agentId,
+            type: 'ai_agent',
+            props: { status: 'idle' }
+        });
+        alert('⚠️ API Key not configured!\n\nPlease:\n1. Create a .env file\n2. Add: VITE_GEMINI_API_KEY=your_key\n3. Restart the dev server\n\nSee SECURITY_SETUP.md for details.');
+        return;
+    }
 
     // Set status to thinking
     editor.updateShape({ id: agentId, type: 'ai_agent', props: { status: 'thinking' } });
@@ -25,63 +222,47 @@ const runAgentTask = async (editor, agentId) => {
     try {
         console.log("🚀 Manual Run Triggered for Agent:", agentId);
 
-        // NEW: Find nearby shapes (text AND images)
-        const agentBounds = editor.getShapePageBounds(agentId);
-        const allShapes = editor.getCurrentPageShapes();
-        console.log(`📊 Total shapes on canvas: ${allShapes.length}`);
-
         let inputText = "";
-        const inputImages = []; // Store image data
-        const PROXIMITY_THRESHOLD = 300; // pixels
+        const inputImages = [];
+        let usedSources = [];
 
-        for (const shape of allShapes) {
-            if (shape.id === agentId || shape.type === 'arrow' || shape.type === 'ai_agent') continue;
+        // 1. STRATEGY: SPATIAL PIPELINE (Arrows)
+        // Check for connected upstream shapes first
+        const linkedInputs = getUpstreamData(editor, agentId);
 
-            const shapeBounds = editor.getShapePageBounds(shape.id);
-            if (!shapeBounds) continue;
+        if (linkedInputs.length > 0) {
+            console.log("✅ Using CONNECTED mode (ignoring proximity)");
+            for (const input of linkedInputs) {
+                if (input.type === 'text') inputText += input.text + "\n\n";
+                if (input.type === 'image') inputImages.push(input);
+                usedSources.push(input.sourceId);
+            }
+        }
+        // 2. STRATEGY: PROXIMITY (Fallback)
+        else {
+            console.log("⚠️ No connections found. Using PROXIMITY mode.");
+            const agentBounds = editor.getShapePageBounds(agentId);
+            const allShapes = editor.getCurrentPageShapes();
+            const PROXIMITY_THRESHOLD = 300; // pixels
 
-            // Calculate distance between agent and this shape
-            const distance = Math.sqrt(
-                Math.pow(agentBounds.x - shapeBounds.x, 2) +
-                Math.pow(agentBounds.y - shapeBounds.y, 2)
-            );
+            for (const shape of allShapes) {
+                if (shape.id === agentId || shape.type === 'arrow' || shape.type === 'ai_agent') continue;
+                // Add helper to avoid re-calculating if we already processed (future proofing)
 
-            if (distance < PROXIMITY_THRESHOLD) {
-                console.log(`📍 Found nearby shape: ${shape.type} (distance: ${Math.round(distance)}px)`);
+                const shapeBounds = editor.getShapePageBounds(shape.id);
+                if (!shapeBounds) continue;
 
-                // 🖼️ Extract IMAGE data
-                if (shape.type === 'image') {
-                    try {
-                        const asset = editor.getAsset(shape.props.assetId);
-                        if (asset && asset.props.src) {
-                            // Extract base64 data (remove data:image/xxx;base64, prefix)
-                            const base64Data = asset.props.src.split(',')[1] || asset.props.src;
-                            const mimeType = asset.props.mimeType || 'image/png';
-                            inputImages.push({ data: base64Data, mimeType });
-                            console.log(`🖼️ Extracted image: ${asset.props.name || 'unnamed'}`);
-                        }
-                    } catch (e) {
-                        console.warn('Failed to extract image:', e);
-                    }
-                }
-                // 📝 Extract TEXT data
-                else if (shape.type === 'ai_result' && shape.props.text) {
-                    inputText += shape.props.text + "\n";
-                    console.log(`📝 Extracted text: ${shape.props.text.substring(0, 50)}...`);
-                } else {
-                    try {
-                        const util = editor.getShapeUtil(shape);
-                        const text = util.getText(shape);
-                        if (text && text.trim()) {
-                            inputText += text + "\n";
-                            console.log(`📝 Extracted text via util: ${text.substring(0, 50)}...`);
-                        }
-                    } catch (e) {
-                        const fallbackText = shape.props.text || shape.props.html || "";
-                        if (fallbackText) {
-                            inputText += fallbackText + "\n";
-                            console.log(`📝 Extracted text from props: ${fallbackText.substring(0, 50)}...`);
-                        }
+                const distance = Math.sqrt(
+                    Math.pow(agentBounds.x - shapeBounds.x, 2) +
+                    Math.pow(agentBounds.y - shapeBounds.y, 2)
+                );
+
+                if (distance < PROXIMITY_THRESHOLD) {
+                    const data = extractDataFromShape(editor, shape);
+                    if (data) {
+                        console.log(`📍 Found nearby shape: ${shape.type} (distance: ${Math.round(distance)}px)`);
+                        if (data.type === 'text') inputText += data.text + "\n\n";
+                        if (data.type === 'image') inputImages.push(data);
                     }
                 }
             }
@@ -90,28 +271,24 @@ const runAgentTask = async (editor, agentId) => {
         console.log(`📄 Final input - Text: ${inputText.length} chars, Images: ${inputImages.length}`);
 
         if (!inputText.trim() && inputImages.length === 0) {
-            console.warn("❌ No nearby content found. Try placing text or images near the agent (within 300px).");
+            console.warn("❌ No content found (neither connected nor nearby).");
             editor.updateShape({ id: agentId, type: 'ai_agent', props: { status: 'idle' } });
             return;
         }
 
-        // Call AI (with Vision support if images present)
-        const taskPrompt = `You are a specialised AI Agent node.
+        // Call AI
+        const taskPrompt = `You are a specialised AI Agent node in a visual OS.
         Task Definition: ${agentShape.props.task}
-        ${inputText ? `Input Text: ${inputText}` : ''}
+        
+        DATA CONTEXT:
+        ${inputText ? `Input Data:\n${inputText}` : 'No text input.'}
         
         Instructions: Execute the task on the input data. Output ONLY the result. No conversational filler.`;
 
-        // Build parts array (text + images)
         const parts = [{ text: taskPrompt }];
-
-        // Add images as inline_data (Gemini Vision API format)
         for (const img of inputImages) {
             parts.push({
-                inline_data: {
-                    mime_type: img.mimeType,
-                    data: img.data
-                }
+                inline_data: { mime_type: img.mimeType, data: img.data }
             });
         }
 
@@ -123,50 +300,26 @@ const runAgentTask = async (editor, agentId) => {
 
         let outputText = "Error processing";
         if (data.error) {
-            const errorMsg = data.error.message;
-            // Friendly message for overload errors
-            if (errorMsg.includes('overloaded')) {
-                outputText = `⏳ API 繁忙中...\n\n请稍等片刻后重试。\n\n💡 提示：点击"运行"按钮重新执行。`;
-            } else {
-                outputText = `API Error: ${errorMsg}`;
-            }
-            console.error("Gemini API Error:", data.error);
-        } else if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+            outputText = `API Error: ${data.error.message}`;
+        } else if (data.candidates && data.candidates[0]) {
             outputText = data.candidates[0].content.parts[0].text;
 
-            // 🔍 Try to parse JSON response (for structured outputs like image URLs)
+            // Try to extract JSON image/structure if present
             try {
                 const jsonMatch = outputText.match(/\{[\s\S]*\}/);
                 if (jsonMatch) {
                     const parsed = JSON.parse(jsonMatch[0]);
-
-                    // If response contains an image URL, use it directly
-                    if (parsed.image && typeof parsed.image === 'string') {
-                        outputText = parsed.image;
-                        console.log('📸 Extracted image URL from JSON:', outputText);
-                    }
-                    // If response has other structured data, stringify it nicely
-                    else {
-                        outputText = JSON.stringify(parsed, null, 2);
-                    }
+                    if (parsed.image) outputText = parsed.image;
+                    else outputText = JSON.stringify(parsed, null, 2);
                 }
-            } catch (e) {
-                // Not JSON or parsing failed, use original text
-                console.log('📝 Response is plain text, not JSON');
-            }
-        } else {
-            console.warn("Unexpected API Response:", data);
-            if (data.promptFeedback) {
-                outputText = `⚠️ Blocked by Safety Filters: ${JSON.stringify(data.promptFeedback)}`;
-            } else {
-                outputText = "⚠️ Error: Empty response from AI. Check Console.";
-            }
+            } catch (e) { }
         }
 
-        // Create Output - USING CUSTOM 'ai_result' SHAPE
-        // This avoids Tldraw schema validation errors on standard shapes
+        // Create Output
+        // Find existing output connection? (Future: Update existing downstream note)
+        // For now, simple create new note
         const newId = createShapeId();
-        const outX = agentShape.x + agentShape.props.w + 120;
+        const outX = agentShape.x + agentShape.props.w + 100;
         const outY = agentShape.y;
 
         editor.createShape({
@@ -181,8 +334,22 @@ const runAgentTask = async (editor, agentId) => {
             }
         });
 
-        // NOTE: Arrow connection removed due to Tldraw v4.2.3 binding issues
-        // The output card is created successfully without the visual connection
+        // 🔗 AUTO-CONNECT OUTPUT (Pipeline Feature)
+        // Create a simple arrow from Agent -> Result using point coordinates
+        const arrowId = createShapeId();
+        const arrowX = agentShape.x + agentShape.props.w / 2;
+        const arrowY = agentShape.y + agentShape.props.h / 2;
+
+        editor.createShape({
+            id: arrowId,
+            type: 'arrow',
+            x: arrowX,
+            y: arrowY,
+            props: {
+                start: { x: 0, y: 0 },  // Relative to arrow position
+                end: { x: outX - arrowX + 150, y: outY - arrowY + 100 }  // Point to center of result
+            }
+        });
 
     } catch (e) {
         console.error("Agent Run Error:", e);
@@ -498,14 +665,101 @@ class AgentShapeUtil extends BaseBoxShapeUtil {
 }
 
 // REGISTER CUSTOM SHAPES
-const customShapeUtils = [PreviewShapeUtil, AgentShapeUtil, ResultShapeUtil, QuizShapeUtil, CameraSimulatorShapeUtil];
+const customShapeUtils = [
+    PreviewShapeUtil,
+    AgentShapeUtil,
+    ResultShapeUtil,
+    QuizShapeUtil,
+    CameraSimulatorShapeUtil,
+    CodeRunnerShapeUtil,
+    BrowserShapeUtil
+];
 
 export default function TldrawBoard() {
     return (
         <div style={{ position: 'fixed', inset: 0 }}>
             <Tldraw persistenceKey="one-worker-os-v2" shapeUtils={customShapeUtils}>
                 <BoardLogic />
+                <AppLauncherDock />
             </Tldraw>
+        </div>
+    );
+}
+
+// -----------------------------------------------------------------------------
+// 🚀 APP LAUNCHER DOCK UI
+// -----------------------------------------------------------------------------
+function AppLauncherDock() {
+    const editor = useEditor();
+
+    const apps = [
+        { id: 'ai_agent', icon: '🤖', label: 'AI Agent', type: 'ai_agent', props: { status: 'idle', task: 'New Agent' } },
+        { id: 'code_runner', icon: '💻', label: 'Code Runner', type: 'code_runner', props: {} },
+        { id: 'browser', icon: '🌐', label: 'Browser', type: 'browser', props: {} },
+        { id: 'camera', icon: '📷', label: 'Camera Ref', type: 'camera_simulator', props: {} },
+        { id: 'quiz', icon: '🎓', label: 'Quiz', type: 'quiz', props: { question: 'New Question', options: ['A', 'B'], correctAnswer: 0 } },
+    ];
+
+    const createApp = (app) => {
+        const center = editor.getViewportPageBounds().center;
+        editor.createShape({
+            id: createShapeId(),
+            type: app.type,
+            x: center.x - 100 + (Math.random() * 40 - 20),
+            y: center.y - 100 + (Math.random() * 40 - 20),
+            props: app.props
+        });
+    };
+
+    return (
+        <div style={{
+            position: 'absolute',
+            top: '50%',
+            right: 24,
+            transform: 'translateY(-50%)',
+            background: 'rgba(255, 255, 255, 0.9)',
+            backdropFilter: 'blur(10px)',
+            padding: '16px 8px', // vertical padding > horizontal
+            borderRadius: 20,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05)',
+            display: 'flex',
+            flexDirection: 'column', // Vertical layout
+            gap: 12,
+            zIndex: 1000,
+            pointerEvents: 'all'
+        }}>
+            {apps.map(app => (
+                <button
+                    key={app.id}
+                    onClick={() => createApp(app)}
+                    title={app.label}
+                    style={{
+                        width: 48,
+                        height: 48,
+                        border: 'none',
+                        background: 'transparent',
+                        borderRadius: 12,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'transform 0.1s, background 0.1s',
+                        fontSize: 24
+                    }}
+                    onMouseEnter={e => {
+                        e.currentTarget.style.transform = 'scale(1.1) translateX(-4px)'; // Move left when hovering
+                        e.currentTarget.style.background = 'rgba(0,0,0,0.05)';
+                    }}
+                    onMouseLeave={e => {
+                        e.currentTarget.style.transform = 'translateY(0)';
+                        e.currentTarget.style.background = 'transparent';
+                    }}
+                >
+                    <span>{app.icon}</span>
+                    <span style={{ fontSize: 9, fontWeight: 500, color: '#64748b', marginTop: 2 }}>{app.label}</span>
+                </button>
+            ))}
         </div>
     );
 }
@@ -1032,55 +1286,6 @@ function BoardLogic() {
 
                 {/* Floating Action Button (FAB) */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, pointerEvents: 'all' }}>
-
-                    {/* 📷 相机模拟器按钮 */}
-                    <button
-                        onClick={() => {
-                            const center = editor.getViewportPageBounds().center;
-                            editor.createShape({
-                                type: 'camera_simulator',
-                                x: center.x - 250,
-                                y: center.y - 300,
-                                props: {}
-                            });
-                        }}
-                        title="创建相机模拟器"
-                        style={{
-                            width: 48, height: 48, borderRadius: 24,
-                            background: '#1a1a1a', color: '#fff',
-                            border: '1px solid #333', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                            fontSize: 20, cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            transition: 'all 0.2s cubic-bezier(0.25, 1, 0.5, 1)'
-                        }}
-                    >
-                        📷
-                    </button>
-
-                    {/* 📝 选择题按钮 */}
-                    <button
-                        onClick={() => {
-                            const center = editor.getViewportPageBounds().center;
-                            editor.createShape({
-                                type: 'quiz',
-                                x: center.x - 200,
-                                y: center.y - 160,
-                                props: {}
-                            });
-                        }}
-                        title="创建选择题"
-                        style={{
-                            width: 48, height: 48, borderRadius: 24,
-                            background: '#3b82f6', color: '#fff',
-                            border: 'none', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
-                            fontSize: 20, cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            transition: 'all 0.2s cubic-bezier(0.25, 1, 0.5, 1)'
-                        }}
-                    >
-                        📝
-                    </button>
-
                     {/* ✨ AI 助手按钮 */}
                     <button
                         onClick={() => setIsAiOpen(!isAiOpen)}
