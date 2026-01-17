@@ -1,0 +1,761 @@
+import React, { useState, useEffect } from 'react';
+import { Tldraw, useEditor, createShapeId, BaseBoxShapeUtil, HTMLContainer } from 'tldraw';
+import 'tldraw/tldraw.css';
+
+// -----------------------------------------------------------------------------
+// 🧠 AI / OS CONFIGURATION
+// -----------------------------------------------------------------------------
+const AI_AGENT_NAME = "AaaS Copilot";
+const API_KEY = "AIzaSyDL8ss39qMOJdCjU_APXO7rlcoS55PdznI";
+const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent";
+
+// -----------------------------------------------------------------------------
+// 🛠️ HELPER FUNCTIONS (Moved to Top for Safety)
+// -----------------------------------------------------------------------------
+
+const runAgentTask = async (editor, agentId) => {
+    const agentShape = editor.getShape(agentId);
+    if (!agentShape || agentShape.type !== 'ai_agent') return;
+
+    // Set status to thinking
+    editor.updateShape({ id: agentId, type: 'ai_agent', props: { status: 'thinking' } });
+
+    try {
+        console.log("🚀 Manual Run Triggered for Agent:", agentId);
+
+        // Scan for inputs (Arrows pointing TO this agent)
+        const arrows = [];
+        const allShapes = editor.getCurrentPageShapes();
+        for (const shape of allShapes) {
+            if (shape.type === 'arrow' && shape.props.end.boundShapeId === agentId) {
+                arrows.push(shape);
+            }
+        }
+
+        let inputText = "";
+        for (const arrow of arrows) {
+            const startId = arrow.props.start.boundShapeId;
+            if (startId) {
+                const startShape = editor.getShape(startId);
+                // Extract text
+                try {
+                    const util = editor.getShapeUtil(startShape);
+                    const text = util.getText(startShape);
+                    if (text) inputText += text + "\n";
+                } catch (e) {
+                    // Check common props
+                    inputText += (startShape.props.text || startShape.props.html || "") + "\n";
+                }
+            }
+        }
+
+        if (!inputText.trim()) {
+            console.warn("No input text found connected to agent.");
+            editor.updateShape({ id: agentId, type: 'ai_agent', props: { status: 'idle' } });
+            return;
+        }
+
+        // Call AI
+        const taskPrompt = `You are a specialised AI Agent node.
+        Task Definition: ${agentShape.props.task}
+        Input Data: ${inputText}
+        
+        Instructions: Execute the task on the input data. Output ONLY the result. No conversational filler.`;
+
+        const body = { contents: [{ parts: [{ text: taskPrompt }] }] };
+        const res = await fetch(`${API_ENDPOINT}?key=${API_KEY}`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+        });
+        const data = await res.json();
+
+        let outputText = "Error processing";
+        if (data.error) {
+            outputText = `API Error: ${data.error.message}`;
+            console.error("Gemini API Error:", data.error);
+        } else if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+            outputText = data.candidates[0].content.parts[0].text;
+        } else {
+            console.warn("Unexpected API Response:", data);
+            if (data.promptFeedback) {
+                outputText = `⚠️ Blocked by Safety Filters: ${JSON.stringify(data.promptFeedback)}`;
+            } else {
+                outputText = "⚠️ Error: Empty response from AI. Check Console.";
+            }
+        }
+
+        // Create Output - USING CUSTOM 'ai_result' SHAPE
+        // This avoids Tldraw schema validation errors on standard shapes
+        const newId = createShapeId();
+        const outX = agentShape.x + agentShape.props.w + 120;
+        const outY = agentShape.y;
+
+        editor.createShape({
+            id: newId,
+            type: 'ai_result',
+            x: outX,
+            y: outY,
+            props: {
+                text: outputText,
+                w: 300,
+                h: 200
+            }
+        });
+
+        // Connect
+        editor.createShape({
+            type: 'arrow',
+            x: outX, y: outY,
+            props: {
+                start: { type: 'binding', boundShapeId: agentId, normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false },
+                end: { type: 'binding', boundShapeId: newId, normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false }
+            }
+        });
+
+    } catch (e) {
+        console.error("Agent Run Error:", e);
+    } finally {
+        editor.updateShape({ id: agentId, type: 'ai_agent', props: { status: 'idle' } });
+    }
+};
+
+// -----------------------------------------------------------------------------
+// 📝 CUSTOM SHAPE: AI Result / Simple Text Note
+// -----------------------------------------------------------------------------
+// We create this to strictly control the schema and avoid validation errors
+class ResultShapeUtil extends BaseBoxShapeUtil {
+    static type = 'ai_result';
+
+    getDefaultProps() {
+        return {
+            w: 300,
+            h: 200,
+            text: 'Result',
+            color: '#f0fdf4'
+        };
+    }
+
+    component(shape) {
+        return (
+            <HTMLContainer style={{
+                pointerEvents: 'all',
+                background: shape.props.color || '#fff',
+                border: '1px solid #000',
+                borderRadius: 4,
+                padding: 12,
+                overflowY: 'auto',
+                fontFamily: 'monospace',
+                fontSize: 14,
+                whiteSpace: 'pre-wrap',
+                boxShadow: '4px 4px 0px rgba(0,0,0,1)'
+            }}>
+                {shape.props.text}
+            </HTMLContainer>
+        );
+    }
+
+    indicator(shape) {
+        return <rect width={shape.props.w} height={shape.props.h} />;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// 🖥️ CUSTOM SHAPE: HTML Preview (Web App Container)
+// -----------------------------------------------------------------------------
+class PreviewShapeUtil extends BaseBoxShapeUtil {
+    static type = 'preview_html';
+
+    getDefaultProps() {
+        return {
+            w: 480,
+            h: 640,
+            html: '<div style="padding: 24px;"><h2>Loading App...</h2></div>',
+            source: ''
+        };
+    }
+
+    component(shape) {
+        return (
+            <HTMLContainer style={{ pointerEvents: 'all', background: '#fff', borderRadius: 8, boxShadow: '0 0 10px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                {/* Drag Handle Header */}
+                <div
+                    style={{ height: 32, background: '#f3f4f6', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab', userSelect: 'none' }}
+                    className="custom-drag-handle"
+                >
+                    <div style={{ width: 40, height: 4, borderRadius: 2, background: '#d1d5db' }} />
+                </div>
+                {/* Iframe Content */}
+                <iframe
+                    srcDoc={shape.props.html}
+                    style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
+                    sandbox="allow-scripts allow-top-navigation-by-user-activation allow-forms allow-same-origin allow-popups allow-modals allow-downloads"
+                    onPointerDown={(e) => e.stopPropagation()}
+                />
+            </HTMLContainer>
+        );
+    }
+
+    indicator(shape) {
+        return <rect width={shape.props.w} height={shape.props.h} />;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// 🤖 CUSTOM SHAPE: AI Agent Node (The "Processor")
+// -----------------------------------------------------------------------------
+class AgentShapeUtil extends BaseBoxShapeUtil {
+    static type = 'ai_agent';
+
+    getDefaultProps() {
+        return {
+            w: 280,
+            h: 160,
+            status: 'idle', // idle, thinking, done
+            task: '等待指令...',
+            output: ''
+        };
+    }
+
+    component(shape) {
+        const editor = useEditor();
+        const handleRun = React.useCallback((e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            // DEBUG LOG
+            console.log('AGENT BUTTON CLICKED', shape.id);
+            runAgentTask(editor, shape.id);
+        }, [editor, shape.id]);
+
+        return (
+            <HTMLContainer style={{ pointerEvents: 'all', display: 'flex', flexDirection: 'column', height: '100%', borderRadius: 12, border: '2px solid #8b5cf6', background: 'white', overflow: 'hidden', boxShadow: '0 4px 12px rgba(139, 92, 246, 0.15)', position: 'relative' }}>
+                {/* Header */}
+                <div style={{ background: '#f5f3ff', padding: '8px 12px', borderBottom: '1px solid #ddd6fe', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 18 }}>🤖</span>
+                    <span style={{ fontWeight: 600, color: '#5b21b6', fontSize: 13 }}>AI 智能体</span>
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderRadius: 99, background: shape.props.status === 'thinking' ? '#fef3c7' : '#dcfce7', fontSize: 10, color: shape.props.status === 'thinking' ? '#b45309' : '#15803d' }}>
+                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: shape.props.status === 'thinking' ? '#f59e0b' : '#22c55e' }} />
+                        {shape.props.status === 'thinking' ? '思考中' : '待命'}
+                    </div>
+                </div>
+
+                {/* Task Body */}
+                <div style={{ padding: 12, paddingBottom: 52, fontSize: 12, color: '#4b5563', flex: 1, fontFamily: 'monospace', lineHeight: 1.4, overflowY: 'auto' }}>
+                    &gt; {shape.props.task}
+                </div>
+
+                {/* Footer Controls - ABSOLUTE POSITIONED */}
+                <div
+                    className="nodrag"
+                    onPointerDownCapture={e => e.stopPropagation()}
+                    style={{
+                        position: 'absolute', bottom: 0, left: 0, right: 0,
+                        padding: '8px 12px', borderTop: '1px solid #f3f4f6', background: '#fafafa',
+                        display: 'flex', justifyContent: 'flex-end', zIndex: 9999,
+                        pointerEvents: 'auto'
+                    }}
+                >
+                    <button
+                        className="nodrag"
+                        onPointerDownCapture={handleRun}
+                        onClick={handleRun}
+                        style={{
+                            background: shape.props.status === 'thinking' ? '#d1d5db' : '#7c3aed',
+                            pointerEvents: 'auto',
+                            position: 'relative', zIndex: 10000,
+                            color: 'white', border: 'none', borderRadius: 6,
+                            padding: '6px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            boxShadow: '0 2px 4px rgba(124, 58, 237, 0.2)'
+                        }}
+                    >
+                        <span>{shape.props.status === 'thinking' ? '⏳' : '▶'}</span>
+                        {shape.props.status === 'thinking' ? '运行中...' : '运行'}
+                    </button>
+                </div>
+            </HTMLContainer>
+        );
+    }
+
+    // Helper to get text from this shape if needed 
+    getText(shape) {
+        return shape.props.task;
+    }
+
+    indicator(shape) {
+        return <rect width={shape.props.w} height={shape.props.h} rx={12} ry={12} />;
+    }
+}
+
+// REGISTER CUSTOM SHAPES
+const customShapeUtils = [PreviewShapeUtil, AgentShapeUtil, ResultShapeUtil];
+
+export default function TldrawBoard() {
+    return (
+        <div style={{ position: 'fixed', inset: 0 }}>
+            <Tldraw persistenceKey="kuse-whiteboard-os-v2" shapeUtils={customShapeUtils}>
+                <BoardLogic />
+            </Tldraw>
+        </div>
+    );
+}
+
+// Inner component to handle AI logic and events
+function BoardLogic() {
+    const editor = useEditor();
+
+    // AI Chat State
+    const [isAiOpen, setIsAiOpen] = useState(false);
+    const [aiInput, setAiInput] = useState('');
+    const [messages, setMessages] = useState([
+        { role: 'system', text: '已切换至 Tldraw (DOM) 架构。我是您的全能 OS 助手。' }
+    ]);
+    const [loading, setLoading] = useState(false);
+    const [isListening, setIsListening] = useState(false);
+    const [selectedCount, setSelectedCount] = useState(0);
+
+    // Update selection count on interaction
+    useEffect(() => {
+        if (!editor) return;
+
+        // Initial check
+        setSelectedCount(editor.getSelectedShapeIds().length);
+
+        // Listen for internal Tldraw state changes
+        const cleanup = editor.store.listen((entry) => {
+            const ids = editor.getSelectedShapeIds();
+            setSelectedCount(ids.length);
+        });
+
+        // Also keep DOM listeners as backup for pure selection clicks
+        const updateSelection = () => {
+            const ids = editor.getSelectedShapeIds();
+            setSelectedCount(ids.length);
+        };
+
+        window.addEventListener('pointerup', updateSelection);
+        window.addEventListener('keyup', updateSelection);
+
+        return () => {
+            cleanup();
+            window.removeEventListener('pointerup', updateSelection);
+            window.removeEventListener('keyup', updateSelection);
+        };
+    }, [editor]);
+
+    const startVoiceInput = () => {
+        if (!('webkitSpeechRecognition' in window)) {
+            return alert("您的浏览器不支持语音输入 (需 Chrome/Edge)");
+        }
+        const recognition = new window.webkitSpeechRecognition();
+        recognition.lang = 'zh-CN';
+        recognition.onstart = () => setIsListening(true);
+        recognition.onend = () => setIsListening(false);
+        recognition.onresult = (e) => {
+            const text = e.results[0][0].transcript;
+            setAiInput(text);
+        };
+        recognition.start();
+    };
+
+    // -------------------------------------------------------------------------
+    // 🧠 AI SYSTEM PROMPT
+    // -------------------------------------------------------------------------
+    const SYSTEM_PROMPT = `You are the OS Kernel for a spatial canvas.
+    You have FULL control to create and modify shapes.
+    
+    🌍 LANGUAGE RULE: 
+    - You MUST use Chinese (简体中文) for the "thought" field and any voice responses.
+    - If creating an Agent, the 'task' description should be in Chinese (e.g., "翻译成英文").
+    
+    CAPABILITIES:
+    1. Create sticky notes for text/knowledge.
+    2. Create arrows to connect ideas.
+    3. 🚀 GENERATE APPS: If the user asks for a tool, game, or utility (e.g. "calculator", "clock", "snake game"), 
+       create a 'preview_html' shape. 
+       Return JSON: { action: "create", type: "preview_html", props: { html: "<html>...</html>", w: 480, h: 640 } }
+       Ensure the HTML is fully functional (embedded CSS/JS).
+    4. 🤖 CREATE AGENTS: If the user asks for an AI processor (e.g. "translator", "summarizer"),
+       create an 'ai_agent' shape.
+       Return JSON: { action: "create", type: "ai_agent", props: { task: "Translate to English", status: "idle" } }
+    
+    RESPONSE FORMAT (JSON ONLY):
+    {
+      "thought": "Reasoning...",
+      "operations": [
+        { "action": "create", "type": "ai_result", "props": { "text": "..." }, "x": 0, "y": 0 },
+        { "action": "update", "id": "...", "props": { ... } }
+      ],
+      "voice_response": "Optional spoken text"
+    }
+    
+    CONTEXT AWARENESS:
+    I will provide the selected shapes. Use them! 
+    - If user says "Make this red", update the selected shape.
+    - If user says "Summarize this", read the selected text.
+    `;
+
+    // -------------------------------------------------------------------------
+    // 🤖 AI CALL HANDLER
+    // -------------------------------------------------------------------------
+    async function callAI(promptOverride = null) {
+        if (!promptOverride && !aiInput.trim()) return;
+
+        const userText = promptOverride || aiInput;
+        // Optimization: Clean input immediately
+        if (!promptOverride) {
+            setMessages(prev => [...prev, { role: 'user', text: userText }]);
+            setAiInput('');
+        }
+        setLoading(true);
+
+        try {
+            // 1. Gather Context (Selected Shapes)
+            const selectedIds = editor.getSelectedShapeIds();
+            let contextData = "Selected Shapes:\n";
+            if (selectedIds.length > 0) {
+                selectedIds.forEach(id => {
+                    const shape = editor.getShape(id);
+                    let content = "";
+                    // Extract text/code content
+                    if (shape.type === 'ai_result' || shape.type === 'text') {
+                        content = `Content: "${shape.props.text}"`;
+                    } else if (shape.type === 'preview_html') {
+                        content = `Code: "${shape.props.html}"`;
+                    } else if (shape.type === 'ai_agent') {
+                        content = `Agent Task: "${shape.props.task}"`;
+                    }
+                    contextData += "- ID: " + shape.id + ", Type: " + shape.type + ", " + content + ", Positions: x=" + Math.round(shape.x) + ", y=" + Math.round(shape.y) + "\n";
+                });
+            } else {
+                contextData += "No shapes selected.\n";
+            }
+
+            // 2. Build Request
+            const finalPrompt = SYSTEM_PROMPT + "\n\nCURRENT CONTEXT:\n" + contextData + "\n\nUSER REQUEST: " + userText;
+
+            const body = {
+                contents: [{ parts: [{ text: finalPrompt }] }]
+            };
+
+            const res = await fetch(`${API_ENDPOINT}?key=${API_KEY}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+
+            const data = await res.json();
+            const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            if (!responseText) {
+                console.error("AI Error Data:", data);
+                const errorMsg = data.error ? data.error.message : (data.promptFeedback ? "Blocked by Safety" : "Empty Response");
+                throw new Error("AI Error: " + errorMsg);
+            }
+
+            // 3. Parse JSON & Execute
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const jsonStr = jsonMatch[0];
+                const plan = JSON.parse(jsonStr);
+
+                setMessages(prev => [...prev, { role: 'assistant', text: plan.thought || "Processing..." }]);
+
+                // Voice Output
+                if (plan.voice_response && 'speechSynthesis' in window) {
+                    const utterance = new SpeechSynthesisUtterance(plan.voice_response);
+                    utterance.lang = 'zh-CN';
+                    window.speechSynthesis.speak(utterance);
+                }
+
+                // Execute Operations
+                if (plan.operations) {
+                    {
+                        const center = editor.getViewportPageBounds().center;
+                        let offset = 0;
+
+                        plan.operations.forEach(op => {
+                            if (op.action === 'create') {
+                                const newId = createShapeId();
+                                // Smart Positioning
+                                let x = center.x + (op.x || 0) + offset;
+                                let y = center.y + (op.y || 0) + offset;
+
+                                // If context exists, place next to it
+                                if (selectedIds.length > 0) {
+                                    const first = editor.getShape(selectedIds[0]);
+                                    x = first.x + first.props.w + 40;
+                                    y = first.y;
+                                }
+
+                                const finalProps = op.props;
+                                let shapeType = op.type;
+
+                                // FIX: Redirect everything to 'ai_result' to avoid schema errors
+                                if (shapeType === 'note' || shapeType === 'geo' || shapeType === 'text') {
+                                    shapeType = 'ai_result';
+                                    finalProps.text = finalProps.text || "New Note";
+                                    finalProps.w = 300;
+                                    finalProps.h = 200;
+                                }
+
+                                // FIX: Handle 'connector' hallucinations
+                                if (shapeType === 'connector' || shapeType === 'edge') {
+                                    shapeType = 'arrow';
+                                }
+
+                                // Special handling for Apps
+                                if (shapeType === 'preview_html') {
+                                    // Ensure dimensions
+                                    finalProps.w = finalProps.w || 480;
+                                    finalProps.h = finalProps.h || 640;
+                                }
+
+                                editor.createShape({
+                                    id: newId,
+                                    type: shapeType,
+                                    x: x,
+                                    y: y,
+                                    props: finalProps
+                                });
+                                offset += 40;
+                            } else if (op.action === 'update' && op.id) {
+                                editor.updateShape({
+                                    id: op.id,
+                                    props: op.props
+                                });
+                            }
+                        });
+                    }
+                }
+            } else {
+                // Fallback for non-JSON response
+                setMessages(prev => [...prev, { role: 'assistant', text: responseText }]);
+            }
+
+        } catch (e) {
+            console.error(e);
+            setMessages(prev => [...prev, { role: 'system', text: "Error: " + e.message }]);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 🧠 VISUAL PROGRAMMING: ARROW LISTENERS
+    // -------------------------------------------------------------------------
+    React.useEffect(() => {
+        if (!editor) return;
+        const cleanup = editor.store.listen((entry) => {
+            const changes = entry.changes;
+            if (changes.updated) {
+                // Auto-trigger logic (Future)
+            }
+        });
+        return () => cleanup();
+    }, [editor]);
+
+    // -------------------------------------------------------------------------
+    // 🖱️ DRAG & DROP FILE LOADING
+    // -------------------------------------------------------------------------
+    React.useEffect(() => {
+        const handleDrop = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const center = editor.getViewportPageBounds().center;
+
+            if (e.dataTransfer.items) {
+                for (let i = 0; i < e.dataTransfer.items.length; i++) {
+                    const item = e.dataTransfer.items[i];
+                    if (item.kind === 'file') {
+                        const file = item.getAsFile();
+
+                        // Text/Markdown Support
+                        if (file.name.endsWith('.md') || file.name.endsWith('.txt') || file.name.endsWith('.csv') || file.name.endsWith('.mdx')) {
+                            const text = await file.text();
+
+                            // Use AI_RESULT shape
+                            editor.createShape({
+                                id: createShapeId(),
+                                type: 'ai_result',
+                                x: center.x + (i * 40),
+                                y: center.y + (i * 40),
+                                props: {
+                                    text: text.slice(0, 2000), // Limit size
+                                    w: 300,
+                                    h: 300
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        };
+
+        const handleDragOver = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+
+        // Note: We use capture to ensure we get the event before Tldraw
+        window.addEventListener('drop', handleDrop, { capture: true });
+        window.addEventListener('dragover', handleDragOver, { capture: true });
+
+        return () => {
+            window.removeEventListener('drop', handleDrop, { capture: true });
+            window.removeEventListener('dragover', handleDragOver, { capture: true });
+        };
+    }, [editor]);
+
+    return (
+        <>
+            {/* Floating Agent Run Button */}
+            {selectedAgent && agentButtonPos && (
+                <div style={{
+                    position: 'fixed',
+                    left: agentButtonPos.x,
+                    top: agentButtonPos.y,
+                    zIndex: 99999,
+                    pointerEvents: 'all'
+                }}>
+                    <button
+                        onMouseDown={(e) => {
+                            console.log('🖱️ Mouse down on floating button');
+                            e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                            console.log('🚀 Floating button clicked!');
+                            e.stopPropagation();
+                            e.preventDefault();
+                            runAgentTask(editor, selectedAgent.id);
+                        }}
+                        onPointerDown={(e) => {
+                            console.log('👆 Pointer down on floating button');
+                            e.stopPropagation();
+                        }}
+                        disabled={selectedAgent.props.status === 'thinking'}
+                        style={{
+                            background: selectedAgent.props.status === 'thinking' ? '#d1d5db' : '#7c3aed',
+                            color: 'white',
+                            border: '2px solid #fff',
+                            borderRadius: 6,
+                            padding: '8px 20px',
+                            fontSize: 13,
+                            fontWeight: 600,
+                            cursor: selectedAgent.props.status === 'thinking' ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            boxShadow: '0 4px 12px rgba(124, 58, 237, 0.6)',
+                            pointerEvents: 'all',
+                            userSelect: 'none'
+                        }}
+                    >
+                        <span>{selectedAgent.props.status === 'thinking' ? '⏳' : '▶'}</span>
+                        {selectedAgent.props.status === 'thinking' ? '运行中...' : '运行'}
+                    </button>
+                    {/* Debug indicator */}
+                    <div style={{
+                        position: 'absolute',
+                        top: -20,
+                        left: 0,
+                        fontSize: 10,
+                        color: '#ef4444',
+                        background: '#fee2e2',
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        pointerEvents: 'none'
+                    }}>
+                        DEBUG: Button Active
+                    </div>
+                </div>
+            )}
+
+            {/* AI Widget / Chat Panel */}
+            <div
+                style={{
+                    position: 'absolute',
+                    top: 12,
+                    right: 180, // Moved left to avoid overlap
+                    width: 380,
+                    display: 'flex', flexDirection: 'column', gap: 8,
+                    pointerEvents: 'none' // Wrapper non-blocking
+                }}
+            >
+                {/* Chat Bubble */}
+                {isAiOpen && (
+                    <div style={{
+                        background: 'rgba(255, 255, 255, 0.95)',
+                        backdropFilter: 'blur(12px)',
+                        borderRadius: 20,
+                        boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+                        border: '1px solid rgba(255,255,255,0.5)',
+                        padding: 16,
+                        maxHeight: 500,
+                        display: 'flex', flexDirection: 'column',
+                        pointerEvents: 'all' // Content interactive
+                    }}>
+                        <div style={{ flex: 1, overflowY: 'auto', marginBottom: 12, minHeight: 100, fontSize: 13, gap: 12, display: 'flex', flexDirection: 'column' }}>
+                            {messages.map((m, i) => (
+                                <div key={i} style={{
+                                    alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                                    background: m.role === 'user' ? '#000' : '#f3f4f6',
+                                    color: m.role === 'user' ? '#fff' : '#000',
+                                    padding: '8px 12px', borderRadius: 12, maxWidth: '85%', lineHeight: 1.4
+                                }}>
+                                    {m.text}
+                                </div>
+                            ))}
+                            {loading && <div style={{ color: '#666', fontSize: 12 }}>Processing...</div>}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <input
+                                style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid #ddd', fontSize: 13, outline: 'none' }}
+                                placeholder="描述一个应用、工具或修改..."
+                                value={aiInput}
+                                onChange={e => setAiInput(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && callAI()}
+                            />
+                            {/* Voice Button */}
+                            <button
+                                onClick={startVoiceInput}
+                                style={{
+                                    width: 36, borderRadius: 8, border: 'none',
+                                    background: isListening ? '#ef4444' : '#fee2e2',
+                                    color: '#b91c1c', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}
+                                title="Voice Input"
+                            >
+                                🎤
+                            </button>
+                            {/* Send Button */}
+                            <button
+                                onClick={() => callAI()}
+                                style={{ background: '#000', color: '#fff', border: 'none', borderRadius: 8, padding: '0 16px', cursor: 'pointer', fontWeight: 600 }}
+                            >
+                                ↵
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Floating Action Button (FAB) */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', pointerEvents: 'all' }}>
+                    <button
+                        onClick={() => setIsAiOpen(!isAiOpen)}
+                        style={{
+                            width: 48, height: 48, borderRadius: 24,
+                            background: '#000', color: '#fff',
+                            border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                            fontSize: 20, cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            transition: 'all 0.2s cubic-bezier(0.25, 1, 0.5, 1)'
+                        }}
+                    >
+                        {isAiOpen ? '✨' : '✨'}
+                    </button>
+                </div>
+            </div>
+        </>
+    );
+}
