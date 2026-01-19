@@ -26,3 +26,4 @@ dist-ssr
 # Environment variables (contains API keys - NEVER commit!)
 .env
 .env.local
+*.bak
