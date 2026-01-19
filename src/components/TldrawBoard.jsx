@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
+import * as ReactLib from 'react'; // Capture React for dependency injection
 import { Tldraw, useEditor, createShapeId, BaseBoxShapeUtil, HTMLContainer } from 'tldraw';
+import * as TldrawLib from 'tldraw'; // Capture all Tldraw exports for dependency injection
+import { transform } from 'sucrase'; // The Compiler Engine
 import 'tldraw/tldraw.css';
 import { QuizShapeUtil } from './shapes/QuizShape';
 import { CameraSimulatorShapeUtil } from './shapes/CameraSimulatorShape';
 import { CodeRunnerShapeUtil } from './shapes/CodeRunnerShape';
 import { BrowserShapeUtil } from './shapes/BrowserShape';
+import AIShapeGeneratorShapeUtil from './shapes/AIShapeGeneratorShape';
+import AITerminalShapeUtil from './shapes/AITerminalShape';
 
 // -----------------------------------------------------------------------------
 // 🧠 AI / OS CONFIGURATION
@@ -702,16 +707,378 @@ const customShapeUtils = [
     QuizShapeUtil,
     CameraSimulatorShapeUtil,
     CodeRunnerShapeUtil,
-    BrowserShapeUtil
+    BrowserShapeUtil,
+    AIShapeGeneratorShapeUtil,
+    AITerminalShapeUtil
 ];
 
 export default function TldrawBoard() {
+    // 动态 ShapeUtils State
+    const [shapeUtils, setShapeUtils] = useState(customShapeUtils);
+    const [editor, setEditor] = useState(null);
+
+    // GOD MODE: 动态注册 Shape 的核心引擎
+    const registerDynamicShape = () => {
+        const codeStr = `
+            import { BaseBoxShapeUtil, HTMLContainer } from 'tldraw'
+            import React from 'react'
+
+            export class GodModeShapeUtil extends BaseBoxShapeUtil {
+                static type = 'god_mode_shape'
+                
+                getDefaultProps() {
+                    return { w: 200, h: 200 }
+                }
+
+                component(shape) {
+                    return (
+                        <HTMLContainer style={{ pointerEvents: 'all' }}>
+                            <div style={{ 
+                                width: '100%', height: '100%', 
+                                background: 'linear-gradient(45deg, #FF0000, #0000FF)', 
+                                borderRadius: '12px',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                flexDirection: 'column',
+                                color: 'white', fontWeight: 'bold',
+                                boxShadow: '0 10px 20px rgba(0,0,0,0.5)',
+                                border: '2px solid white'
+                            }}>
+                                <div style={{ fontSize: 40 }}>⚡</div>
+                                <div>GOD MODE</div>
+                                <div style={{ fontSize: 10, opacity: 0.8 }}>Generated at Runtime</div>
+                            </div>
+                        </HTMLContainer>
+                    )
+                }
+                indicator(shape) {
+                    return <rect width={shape.props.w} height={shape.props.h} />
+                }
+            }
+        `;
+
+        try {
+            console.log("⚡ Compiling dynamic shape...");
+            // 1. Transpile (compile JSX/TS to JS)
+            const compiledCode = transform(codeStr, {
+                transforms: ['typescript', 'jsx', 'imports'],
+            }).code;
+
+            // 2. Prepare Injection Context
+            const exports = {};
+            const require = (mod) => {
+                if (mod === 'tldraw') return TldrawLib;
+                if (mod === 'react') return ReactLib;
+                throw new Error(`Unknown module: ${mod}`);
+            };
+
+            // 3. Execute with Function constructor
+            const factory = new Function('require', 'exports', 'React', compiledCode);
+            factory(require, exports, ReactLib);
+
+            // 4. Extract the ShapeUtil
+            const UtilClass = Object.values(exports)[0];
+
+            if (!UtilClass || !UtilClass.type) {
+                throw new Error("Code did not export a valid ShapeUtil class with a static 'type' property.");
+            }
+
+            console.log("🔥 GOD MODE: Registered new shape:", UtilClass.type);
+
+            // 5. Hot Swap!
+            setShapeUtils(prev => [...prev, UtilClass]);
+
+            // 6. Create Instance (Need editor)
+            if (editor) {
+                editor.run(() => {
+                    const id = createShapeId();
+                    editor.createShape({
+                        id,
+                        type: UtilClass.type,
+                        x: editor.getViewportPageBounds().x + editor.getViewportPageBounds().w / 2 - 100,
+                        y: editor.getViewportPageBounds().y + editor.getViewportPageBounds().h / 2 - 100,
+                    });
+                    // Center camera on it
+                    editor.zoomToBounds(editor.getShapePageBounds(id), { duration: 1000 });
+                });
+                alert("⚡ God Mode Activated: New Shape Class Injected!");
+            } else {
+                alert("Editor not ready yet, but shape registered.");
+            }
+
+        } catch (e) {
+            console.error("GOD MODE FAILED:", e);
+            alert("Compilation Failed: " + e.message);
+        }
+    };
+
     return (
         <div style={{ position: 'fixed', inset: 0 }}>
-            <Tldraw persistenceKey="one-worker-os-v2" shapeUtils={customShapeUtils}>
+            <Tldraw
+                persistenceKey="one-worker-os-v2"
+                shapeUtils={shapeUtils}
+                onMount={(originalEditor) => setEditor(originalEditor)}
+            >
                 <BoardLogic />
                 <AppLauncherDock />
+
+                {/* GOD MODE BUTTON (Test Trigger) */}
+                <div style={{
+                    position: 'absolute', top: 20, right: 20, zIndex: 99999
+                }}>
+                    <button
+                        onClick={registerDynamicShape}
+                        style={{
+                            background: 'black', color: '#0f0', border: '1px solid #0f0',
+                            padding: '10px 20px', fontFamily: 'monospace', fontWeight: 'bold',
+                            cursor: 'pointer', boxShadow: '0 0 10px #0f0'
+                        }}
+                    >
+                        ⚡ TEST GOD MODE
+                    </button>
+                </div>
             </Tldraw>
+        </div>
+    );
+}
+
+// -----------------------------------------------------------------------------
+// 🏪 APP STORE PANEL
+// -----------------------------------------------------------------------------
+function AppStorePanel({ editor, customApps, setCustomApps, onClose }) {
+    const [newAppName, setNewAppName] = useState('');
+    const [newAppIcon, setNewAppIcon] = useState('⭐');
+    const [selectedShape, setSelectedShape] = useState(null);
+
+    // Get selected shape to save as template
+    useEffect(() => {
+        if (!editor) return;
+        const selected = editor.getSelectedShapes()[0];
+        setSelectedShape(selected || null);
+    }, [editor]);
+
+    const saveCurrentShapeAsApp = () => {
+        if (!selectedShape || !newAppName.trim()) {
+            alert('Please select a shape and enter a name');
+            return;
+        }
+
+        const newApp = {
+            id: `custom_${Date.now()}`,
+            icon: newAppIcon,
+            label: newAppName,
+            type: selectedShape.type,
+            props: { ...selectedShape.props },
+            builtin: false
+        };
+
+        const updated = [...customApps, newApp];
+        setCustomApps(updated);
+        localStorage.setItem('customDockApps', JSON.stringify(updated));
+
+        setNewAppName('');
+        setNewAppIcon('⭐');
+        alert(`✅ "${newAppName}" added to Dock!`);
+    };
+
+    const exportApps = () => {
+        const dataStr = JSON.stringify(customApps, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'my-apps.json';
+        link.click();
+    };
+
+    const importApps = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const imported = JSON.parse(event.target.result);
+                const updated = [...customApps, ...imported];
+                setCustomApps(updated);
+                localStorage.setItem('customDockApps', JSON.stringify(updated));
+                alert(`✅ Imported ${imported.length} apps!`);
+            } catch (error) {
+                alert('❌ Failed to import apps');
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    return (
+        <div style={{
+            position: 'absolute',
+            bottom: 90,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 500,
+            maxHeight: 400,
+            background: 'white',
+            borderRadius: 16,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+            padding: 20,
+            zIndex: 1001,
+            pointerEvents: 'all',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16
+        }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>🏪 App Store</h3>
+                <button
+                    onClick={onClose}
+                    style={{
+                        border: 'none',
+                        background: 'transparent',
+                        fontSize: 20,
+                        cursor: 'pointer',
+                        color: '#666'
+                    }}
+                >
+                    ×
+                </button>
+            </div>
+
+            {/* Save Current Shape Section */}
+            <div style={{
+                padding: 16,
+                background: '#f9fafb',
+                borderRadius: 12,
+                border: '1px solid #e5e7eb'
+            }}>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 }}>
+                    💾 Save Current Shape as App
+                </h4>
+                {selectedShape ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ fontSize: 12, color: '#666' }}>
+                            Selected: <strong>{selectedShape.type}</strong>
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="App Name"
+                            value={newAppName}
+                            onChange={e => setNewAppName(e.target.value)}
+                            style={{
+                                padding: '8px 12px',
+                                borderRadius: 8,
+                                border: '1px solid #ddd',
+                                fontSize: 13
+                            }}
+                        />
+                        <input
+                            type="text"
+                            placeholder="Icon (emoji)"
+                            value={newAppIcon}
+                            onChange={e => setNewAppIcon(e.target.value)}
+                            maxLength={2}
+                            style={{
+                                padding: '8px 12px',
+                                borderRadius: 8,
+                                border: '1px solid #ddd',
+                                fontSize: 13
+                            }}
+                        />
+                        <button
+                            onClick={saveCurrentShapeAsApp}
+                            style={{
+                                padding: '8px 16px',
+                                background: '#000',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: 8,
+                                cursor: 'pointer',
+                                fontWeight: 600
+                            }}
+                        >
+                            Add to Dock
+                        </button>
+                    </div>
+                ) : (
+                    <div style={{ fontSize: 12, color: '#999', textAlign: 'center', padding: 16 }}>
+                        Select a shape on the canvas to save it as an app
+                    </div>
+                )}
+            </div>
+
+            {/* My Apps List */}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: 14, fontWeight: 600 }}>
+                    📱 My Apps ({customApps.length})
+                </h4>
+                {customApps.length === 0 ? (
+                    <div style={{ fontSize: 12, color: '#999', textAlign: 'center', padding: 16 }}>
+                        No custom apps yet
+                    </div>
+                ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {customApps.map(app => (
+                            <div
+                                key={app.id}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 12,
+                                    padding: 8,
+                                    background: '#f9fafb',
+                                    borderRadius: 8
+                                }}
+                            >
+                                <span style={{ fontSize: 24 }}>{app.icon}</span>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 600, fontSize: 13 }}>{app.label}</div>
+                                    <div style={{ fontSize: 11, color: '#666' }}>{app.type}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Import/Export */}
+            <div style={{ display: 'flex', gap: 8, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+                <button
+                    onClick={exportApps}
+                    disabled={customApps.length === 0}
+                    style={{
+                        flex: 1,
+                        padding: '8px',
+                        background: customApps.length > 0 ? '#f3f4f6' : '#e5e7eb',
+                        border: 'none',
+                        borderRadius: 8,
+                        cursor: customApps.length > 0 ? 'pointer' : 'not-allowed',
+                        fontSize: 12,
+                        fontWeight: 600
+                    }}
+                >
+                    📤 Export
+                </button>
+                <label style={{ flex: 1 }}>
+                    <input
+                        type="file"
+                        accept=".json"
+                        onChange={importApps}
+                        style={{ display: 'none' }}
+                    />
+                    <div style={{
+                        padding: '8px',
+                        background: '#f3f4f6',
+                        border: 'none',
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        textAlign: 'center'
+                    }}>
+                        📥 Import
+                    </div>
+                </label>
+            </div>
         </div>
     );
 }
@@ -721,14 +1088,34 @@ export default function TldrawBoard() {
 // -----------------------------------------------------------------------------
 function AppLauncherDock() {
     const editor = useEditor();
+    const [customApps, setCustomApps] = useState([]);
+    const [showAppStore, setShowAppStore] = useState(false);
 
-    const apps = [
-        { id: 'ai_agent', icon: '🤖', label: 'AI Agent', type: 'ai_agent', props: { status: 'idle', task: 'New Agent' } },
-        { id: 'code_runner', icon: '💻', label: 'Code Runner', type: 'code_runner', props: {} },
-        { id: 'browser', icon: '🌐', label: 'Browser', type: 'browser', props: {} },
-        { id: 'camera', icon: '📷', label: 'Camera Ref', type: 'camera_simulator', props: {} },
-        { id: 'quiz', icon: '🎓', label: 'Quiz', type: 'quiz', props: { question: 'New Question', options: ['A', 'B'], correctAnswer: 0 } },
+    // Load custom apps from localStorage on mount
+    useEffect(() => {
+        const saved = localStorage.getItem('customDockApps');
+        if (saved) {
+            try {
+                setCustomApps(JSON.parse(saved));
+            } catch (e) {
+                console.warn('Failed to load custom apps:', e);
+            }
+        }
+    }, []);
+
+    // Built-in apps
+    const builtInApps = [
+        { id: 'ai_agent', icon: '🤖', label: 'AI Agent', type: 'ai_agent', props: { status: 'idle', task: 'New Agent' }, builtin: true },
+        { id: 'code_runner', icon: '💻', label: 'Code Runner', type: 'code_runner', props: {}, builtin: true },
+        { id: 'browser', icon: '🌐', label: 'Browser', type: 'browser', props: {}, builtin: true },
+        { id: 'camera', icon: '📷', label: 'Camera Ref', type: 'camera_simulator', props: {}, builtin: true },
+        { id: 'quiz', icon: '🎓', label: 'Quiz', type: 'quiz', props: { question: 'New Question', options: ['A', 'B'], correctAnswer: 0 }, builtin: true },
+        { id: 'ai_shape_factory', icon: '🏭', label: 'Shape Factory', type: 'ai_shape_generator', props: {}, builtin: true },
+        { id: 'ai_terminal', icon: '💬', label: 'AI Terminal', type: 'ai_terminal', props: {}, builtin: true },
     ];
+
+    // Combine built-in and custom apps
+    const allApps = [...builtInApps, ...customApps];
 
     const createApp = (app) => {
         const center = editor.getViewportPageBounds().center;
@@ -741,56 +1128,146 @@ function AppLauncherDock() {
         });
     };
 
+    const removeCustomApp = (appId) => {
+        const updated = customApps.filter(app => app.id !== appId);
+        setCustomApps(updated);
+        localStorage.setItem('customDockApps', JSON.stringify(updated));
+    };
+
     return (
-        <div style={{
-            position: 'absolute',
-            top: '50%',
-            right: 24,
-            transform: 'translateY(-50%)',
-            background: 'rgba(255, 255, 255, 0.9)',
-            backdropFilter: 'blur(10px)',
-            padding: '16px 8px', // vertical padding > horizontal
-            borderRadius: 20,
-            boxShadow: '0 10px 30px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05)',
-            display: 'flex',
-            flexDirection: 'column', // Vertical layout
-            gap: 12,
-            zIndex: 1000,
-            pointerEvents: 'all'
-        }}>
-            {apps.map(app => (
+        <>
+            {/* Main Dock */}
+            <div style={{
+                position: 'absolute',
+                bottom: 24,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: 'rgba(255, 255, 255, 0.9)',
+                backdropFilter: 'blur(10px)',
+                padding: '8px 16px',
+                borderRadius: 20,
+                boxShadow: '0 10px 30px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05)',
+                display: 'flex',
+                flexDirection: 'row',
+                gap: 12,
+                zIndex: 1000,
+                pointerEvents: 'all'
+            }}>
+                {allApps.map(app => (
+                    <div key={app.id} style={{ position: 'relative' }}>
+                        <button
+                            onClick={() => createApp(app)}
+                            title={app.label}
+                            style={{
+                                width: 64,
+                                height: 48,
+                                border: 'none',
+                                background: 'transparent',
+                                borderRadius: 12,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                transition: 'transform 0.1s, background 0.1s',
+                                fontSize: 24,
+                                position: 'relative'
+                            }}
+                            onMouseEnter={e => {
+                                e.currentTarget.style.transform = 'scale(1.1) translateY(-4px)';
+                                e.currentTarget.style.background = 'rgba(0,0,0,0.05)';
+                            }}
+                            onMouseLeave={e => {
+                                e.currentTarget.style.transform = 'scale(1)';
+                                e.currentTarget.style.background = 'transparent';
+                            }}
+                        >
+                            <span>{app.icon}</span>
+                            <span style={{ fontSize: 9, fontWeight: 500, color: '#64748b', marginTop: 2 }}>{app.label}</span>
+                            {/* Custom app indicator */}
+                            {!app.builtin && (
+                                <span style={{
+                                    position: 'absolute',
+                                    top: 2,
+                                    right: 2,
+                                    width: 6,
+                                    height: 6,
+                                    borderRadius: '50%',
+                                    background: '#10b981',
+                                    border: '1px solid white'
+                                }} />
+                            )}
+                        </button>
+                        {/* Remove button for custom apps */}
+                        {!app.builtin && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    removeCustomApp(app.id);
+                                }}
+                                style={{
+                                    position: 'absolute',
+                                    top: -4,
+                                    right: -4,
+                                    width: 16,
+                                    height: 16,
+                                    borderRadius: '50%',
+                                    border: 'none',
+                                    background: '#ef4444',
+                                    color: 'white',
+                                    fontSize: 10,
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    opacity: 0,
+                                    transition: 'opacity 0.2s'
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                                onMouseLeave={e => e.currentTarget.style.opacity = '0'}
+                                title="Remove from Dock"
+                            >
+                                ×
+                            </button>
+                        )}
+                    </div>
+                ))}
+
+                {/* App Store Button */}
                 <button
-                    key={app.id}
-                    onClick={() => createApp(app)}
-                    title={app.label}
+                    onClick={() => setShowAppStore(!showAppStore)}
+                    title="App Store"
                     style={{
                         width: 48,
                         height: 48,
                         border: 'none',
-                        background: 'transparent',
+                        background: showAppStore ? 'rgba(0,0,0,0.1)' : 'transparent',
                         borderRadius: 12,
                         display: 'flex',
-                        flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: 'pointer',
-                        transition: 'transform 0.1s, background 0.1s',
-                        fontSize: 24
+                        fontSize: 24,
+                        marginLeft: 8,
+                        borderLeft: '1px solid rgba(0,0,0,0.1)'
                     }}
-                    onMouseEnter={e => {
-                        e.currentTarget.style.transform = 'scale(1.1) translateX(-4px)'; // Move left when hovering
-                        e.currentTarget.style.background = 'rgba(0,0,0,0.05)';
-                    }}
-                    onMouseLeave={e => {
-                        e.currentTarget.style.transform = 'translateY(0)';
-                        e.currentTarget.style.background = 'transparent';
-                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,0,0,0.05)'}
+                    onMouseLeave={e => e.currentTarget.style.background = showAppStore ? 'rgba(0,0,0,0.1)' : 'transparent'}
                 >
-                    <span>{app.icon}</span>
-                    <span style={{ fontSize: 9, fontWeight: 500, color: '#64748b', marginTop: 2 }}>{app.label}</span>
+                    🏪
                 </button>
-            ))}
-        </div>
+            </div>
+
+            {/* App Store Panel */}
+            {showAppStore && (
+                <AppStorePanel
+                    editor={editor}
+                    customApps={customApps}
+                    setCustomApps={setCustomApps}
+                    onClose={() => setShowAppStore(false)}
+                />
+            )}
+        </>
     );
 }
 
@@ -862,7 +1339,7 @@ function BoardLogic() {
             const files = Array.from(e.dataTransfer.files);
             if (files.length === 0) return;
 
-            const fileFingerprint = files.map(f => `${f.name}-${f.size}`).join('|');
+            const fileFingerprint = files.map(f => `${f.name} - ${f.size}`).join('|');
             if (window._lastDropFingerprint === fileFingerprint && now - window._dropLock < 2000) {
                 console.log('🚫 Drop blocked by fingerprint match');
                 return;
@@ -885,7 +1362,7 @@ function BoardLogic() {
                         const src = e.target.result;
                         // Manual asset ID generation that matches Tldraw's expected format
                         // Using a simple random string for local offline usage
-                        const assetIdString = `asset:${Date.now()}`;
+                        const assetIdString = `asset: ${Date.now()}`;
                         // In TypeScript this would need casting, but in JS string is fine for the ID field usually,
                         // but Tldraw expects a specific Branded type. In strict mode createAssets handles it.
 
@@ -1008,47 +1485,49 @@ function BoardLogic() {
     const SYSTEM_PROMPT = `You are the OS Kernel for a spatial canvas.
     You have FULL control to create and modify shapes.
     
-    🌍 LANGUAGE RULE: 
-    - You MUST use Chinese (简体中文) for the "thought" field and any voice responses.
-    - If creating an Agent, the 'task' description should be in Chinese (e.g., "翻译成英文").
-    
-    CAPABILITIES:
-    1. Create sticky notes for text/knowledge.
+    🌍 LANGUAGE RULE:
+    - You MUST use Chinese(简体中文) for the "thought" field and any voice responses.
+    - If creating an Agent, the 'task' description should be in Chinese(e.g., "翻译成英文").
+
+        CAPABILITIES:
+    1. Create sticky notes for text / knowledge.
     2. Create arrows to connect ideas.
-    3. 🚀 GENERATE APPS: If the user asks for a tool, game, or utility (e.g. "calculator", "clock", "snake game"), 
-       create a 'preview_html' shape. 
+    3. 🚀 GENERATE APPS: If the user asks for a tool, game, or utility(e.g. "calculator", "clock", "snake game"),
+        create a 'preview_html' shape. 
        Return JSON: { action: "create", type: "preview_html", props: { html: "<html>...REALLY COOL MODERN UI...</html>", w: 480, h: 640 } }
-       Ensure the HTML is fully functional (embedded CSS/JS).
-    4. 🤖 CREATE AGENTS: If the user asks for an AI processor (e.g. "translator", "summarizer"),
-       create an 'ai_agent' shape.
+       Ensure the HTML is fully functional(embedded CSS / JS).
+    4. 🤖 CREATE AGENTS: If the user asks for an AI processor(e.g. "translator", "summarizer"),
+        create an 'ai_agent' shape.
        Return JSON: { action: "create", type: "ai_agent", props: { task: "Translate to English", status: "idle" } }
     5. 📝 CREATE QUIZ: If user asks for a quiz or practice question,
-       create a 'quiz' shape.
+        create a 'quiz' shape.
        Return JSON: { action: "create", type: "quiz", props: { question: "...", options: [...], correctAnswer: 0 } }
     6. 📷 CREATE CAMERA: If user asks for a camera simulator,
-       create a 'camera_simulator' shape.
-       Return JSON: { action: "create", type: "camera_simulator", props: {} }
+        create a 'camera_simulator' shape.
+       Return JSON: { action: "create", type: "camera_simulator", props: { } }
     7. 🔗 CREATE CONNECTED WORKFLOWS: If user asks to connect shapes or create a workflow:
-       - First create the shapes
-       - Then create arrows with PROPER BINDINGS
-       - Arrow format: { action: "create", type: "arrow", props: { 
-           start: { x: 0, y: 0 },
-           end: { x: 100, y: 100 }
-         }}
+    - First create the shapes
+        - Then create arrows with PROPER BINDINGS
+            - Arrow format: {
+                action: "create", type: "arrow", props: {
+                    start: { x: 0, y: 0 },
+                    end: { x: 100, y: 100 }
+                }
+            }
     
-    RESPONSE FORMAT (JSON ONLY):
+    RESPONSE FORMAT(JSON ONLY):
     {
-      "thought": "Reasoning...",
-      "operations": [
-        { "action": "create", "type": "ai_result", "props": { "text": "..." }, "x": 0, "y": 0 },
-        { "action": "update", "id": "...", "props": { ... } }
-      ],
-      "voice_response": "Optional spoken text"
+        "thought": "Reasoning...",
+            "operations": [
+                { "action": "create", "type": "ai_result", "props": { "text": "..." }, "x": 0, "y": 0 },
+                { "action": "update", "id": "...", "props": { ... } }
+            ],
+                "voice_response": "Optional spoken text"
     }
     
     CONTEXT AWARENESS:
-    I will provide the selected shapes. Use them! 
-    - If user says "Make this red", update the selected shape.
+    I will provide the selected shapes.Use them!
+        - If user says "Make this red", update the selected shape.
     - If user says "Summarize this", read the selected text.
     - If user says "Connect these", create arrows between selected shapes.
     `;
@@ -1096,7 +1575,7 @@ function BoardLogic() {
                 contents: [{ parts: [{ text: finalPrompt }] }]
             };
 
-            const res = await fetch(`${API_ENDPOINT}?key=${API_KEY}`, {
+            const res = await fetch(`${API_ENDPOINT}?key = ${API_KEY} `, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body)

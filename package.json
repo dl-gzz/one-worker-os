@@ -17,6 +17,7 @@
     "react-konva": "^19.2.1",
     "react-konva-utils": "^2.0.0",
     "react-markdown": "^10.1.0",
+    "sucrase": "^3.35.1",
     "tldraw": "^4.2.3"
   },
   "devDependencies": {
