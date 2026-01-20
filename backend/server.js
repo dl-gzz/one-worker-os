@@ -8,7 +8,7 @@ const { Pool } = require('pg'); // PostgreSQL
 // const { MongoClient } = require('mongodb'); // MongoDB
 
 const app = express();
-const PORT = 3001;
+const PORT = 3008;
 
 // 中间件
 app.use(cors());
@@ -128,6 +128,75 @@ app.post('/api/database/tables', async (req, res) => {
 // 健康检查
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// OpenCode Proxy Configuration
+const OPENCODE_URL = 'http://127.0.0.1:4096';
+
+// Proxy: Create Session
+app.post('/api/opencode/session', async (req, res) => {
+    try {
+        console.log('🔌 Proxying Create Session to OpenCode...');
+        const response = await fetch(`${OPENCODE_URL}/session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req.body)
+        });
+
+        if (!response.ok) {
+            throw new Error(`OpenCode Error: ${await response.text()}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (error) {
+        console.error('OpenCode Session Proxy Error:', error.message);
+        res.status(502).json({ error: 'Failed to connect to OpenCode service' });
+    }
+});
+
+// Proxy: Send Message
+app.post('/api/opencode/session/:id/message', async (req, res) => {
+    try {
+        const { id } = req.params;
+        console.log(`🔌 Proxying Message to OpenCode Session ${id}...`);
+
+        const response = await fetch(`${OPENCODE_URL}/session/${id}/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req.body)
+        });
+
+        if (!response.ok) {
+            throw new Error(`OpenCode Error: ${await response.text()}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (error) {
+        console.error('OpenCode Message Proxy Error:', error.message);
+        res.status(502).json({ error: 'Failed to communicate with OpenCode service' });
+    }
+});
+
+// Serve AI Instructions
+const fs = require('fs');
+const path = require('path');
+
+app.get('/instructions', (req, res) => {
+    try {
+        const filePath = path.join(__dirname, '../AI_INSTRUCTIONS.md');
+        if (fs.existsSync(filePath)) {
+            const content = fs.readFileSync(filePath, 'utf8');
+            res.json({ content });
+        } else {
+            console.error('AI_INSTRUCTIONS.md not found at:', filePath);
+            res.status(404).json({ error: 'Instructions file not found' });
+        }
+    } catch (error) {
+        console.error('Error reading instructions:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 });
 
 // 启动服务器

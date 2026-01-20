@@ -6,10 +6,12 @@
 class AIProvider {
     constructor() {
         // 模式：cloud（云端）或 local（本地）
-        this.mode = localStorage.getItem('aiMode') || 'cloud';
+        // Default to LOCAL as per user request for OpenCode integration
+        this.mode = 'local';
 
-        // 本地 Claude Code 的 Token
-        this.token = localStorage.getItem('claudeToken') || null;
+        // Google Gemini API Key
+        // Priority: Local Storage -> Hardcoded Fallback
+        this.token = localStorage.getItem('claudeToken') || import.meta.env.VITE_GEMINI_API_KEY || '';
 
         // WebSocket 连接
         this.localWs = null;
@@ -121,6 +123,39 @@ class AIProvider {
     }
 
     /**
+     * 获取 AI 宪法
+     */
+    async getInstructions() {
+        console.log('   ✨ 正在获取 AI_INSTRUCTIONS.md ...');
+        try {
+            const ruleRes = await fetch('http://localhost:3008/instructions');
+            if (ruleRes.ok) {
+                const ruleData = await ruleRes.json();
+                console.log('   ✅ 成功加载宪法 (长度:', ruleData.content.length, ')');
+                return `
+IMPORTANT: You act as the Kernel of One Worker OS.
+Below is your CONSTITUTION (AI_INSTRUCTIONS.md). You MUST follow it strictly.
+
+CRITICAL: DO NOT use your internal tools to write files.
+CRITICAL: DO NOT return markdown text.
+CRITICAL: YOU MUST RETURN VALID JSON ONLY for the frontend to execute.
+
+------------------------------------------------------------------
+${ruleData.content}
+------------------------------------------------------------------
+`;
+            } else {
+                console.warn('   ⚠️ 无法加载宪法:', ruleRes.status);
+            }
+        } catch (err) {
+            console.warn('   ⚠️ 无法连接规则服务器:', err.message);
+        }
+
+        // Fallback
+        return "IMPORTANT: Please read AI_INSTRUCTIONS.md in root.\n\nCRITICAL: YOU MUST RETURN VALID JSON ONLY for the frontend to execute.\n\n";
+    }
+
+    /**
      * 统一的生成接口
      * @param {string} prompt - 提示词
      * @param {object} options - 选项
@@ -159,14 +194,17 @@ class AIProvider {
     /**
      * 本地对话（OpenCode HTTP API）
      */
+    /**
+     * 本地对话（通过 Shape Factory Bridge 调用 Claude CLI）
+     */
     async chatLocal(prompt, existingSessionId = null) {
-        // 直接连接 OpenCode (HTTP)
-        const PORT = 4096;
-        const BASE_URL = `http://localhost:${PORT}`;
+        // 通过后端代理连接 OpenCode
+        const PORT = 3008; // Backend Port
+        const BASE_URL = `http://localhost:${PORT}/api/opencode`;
         let sessionId = existingSessionId;
 
         try {
-            console.log(`📍 连接本机 OpenCode (${BASE_URL})...`);
+            console.log(`📍 连接本机 OpenCode (${BASE_URL})... [Force Update ${Date.now()}]`);
 
             // 1. 如果没有会话ID，创建新会话
             if (!sessionId) {
@@ -195,11 +233,12 @@ class AIProvider {
                 console.log('   🔄 复用会话 ID:', sessionId);
             }
 
-            // 2. 发送消息
-            console.log('   ② 发送指令...');
+            // 纯净模式：不注入任何系统提示词
+            let finalPrompt = prompt;
+
             const requestBody = {
                 parts: [
-                    { type: "text", text: prompt }
+                    { type: "text", text: finalPrompt }
                 ]
             };
 
@@ -223,34 +262,15 @@ class AIProvider {
             // 解析响应
             const messageData = await messageRes.json();
 
-            // 提取内容
+            // 提取内容 (OpenCode 格式)
             let content = '';
             if (messageData.content) content = messageData.content;
             else if (messageData.parts && Array.isArray(messageData.parts)) {
                 content = messageData.parts
-                    .filter(p => {
-                        // 1. 只保留文本类型
-                        if (p.type && p.type !== 'text') return false;
-
-                        // 2. 这里的 p 可能是字符串对象或包含 text 属性的对象
-                        const text = typeof p === 'string' ? p : p.text;
-                        if (!text) return false;
-
-                        // 3. 过滤掉元数据/日志行 (例如: ("id": "...", "type": "step-start") )
-                        const trimmed = text.trim();
-                        if (trimmed.startsWith('("id":') || trimmed.startsWith('{"id":')) return false;
-
-                        // 4. 过滤掉明显的思考过程 (这一步比较激进，如果需要看思考过程可以去掉)
-                        if (trimmed.startsWith('**') && (trimmed.includes('Response') || trimmed.includes('Thinking'))) return false;
-
-                        return true;
-                    })
-                    .map(p => typeof p === 'string' ? p : p.text)
-                    .join('\n')
-                    .trim();
+                    .filter(p => p.type === 'text')
+                    .map(p => p.text)
+                    .join('\n');
             }
-            else if (typeof messageData === 'string') content = messageData;
-            else content = JSON.stringify(messageData);
 
             return {
                 text: content,
@@ -259,12 +279,7 @@ class AIProvider {
 
         } catch (error) {
             console.error('❌ OpenCode 调用失败:', error);
-            if (error.name === 'AbortError') {
-                throw new Error('请求超时 (OpenCode 响应过慢)');
-            }
-            if (error.message.includes('Failed to fetch')) {
-                throw new Error(`无法连接 OpenCode (端口 ${PORT})。\n请确保运行: opencode serve --port ${PORT} --cors http://localhost:5173`);
-            }
+            if (error.name === 'AbortError') throw new Error('请求超时 (OpenCode 响应过慢)');
             throw error;
         }
     }
@@ -278,32 +293,48 @@ class AIProvider {
     /**
      * 云端生成（Gemini API）
      */
+    /**
+     * 云端生成（Gemini API - Direct）
+     */
     async generateCloud(prompt, options = {}) {
         try {
-            const response = await fetch('/api/ai', {
+            console.log('☁️ Calling Gemini Cloud API...');
+
+            // Pure Mode: No Instructions injected
+            const finalPrompt = prompt;
+
+            // Direct call, minimal prompt
+            const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+            if (!API_KEY) {
+                throw new Error('Missing API Key. Please set VITE_GEMINI_API_KEY in .env');
+            }
+            // Use gemini-1.5-flash-latest which is an alias to the latest version
+            const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${API_KEY}`;
+
+            const response = await fetch(API_URL, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    prompt,
-                    ...options
+                    contents: [{
+                        parts: [{ text: finalPrompt }]
+                    }]
                 })
             });
 
             if (!response.ok) {
-                throw new Error(`API 错误: ${response.status}`);
+                const errText = await response.text();
+                throw new Error(`Gemini API Error: ${response.status} - ${errText}`);
             }
 
             const data = await response.json();
-
-            // 提取生成的文本
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
             return text;
 
         } catch (error) {
-            console.error('云端生成失败:', error);
+            console.error('Cloud Generation Failed:', error);
             throw error;
         }
     }

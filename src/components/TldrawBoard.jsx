@@ -4,12 +4,7 @@ import { Tldraw, useEditor, createShapeId, BaseBoxShapeUtil, HTMLContainer } fro
 import * as TldrawLib from 'tldraw'; // Capture all Tldraw exports for dependency injection
 import { transform } from 'sucrase'; // The Compiler Engine
 import 'tldraw/tldraw.css';
-import { QuizShapeUtil } from './shapes/QuizShape';
-import { CameraSimulatorShapeUtil } from './shapes/CameraSimulatorShape';
-import { CodeRunnerShapeUtil } from './shapes/CodeRunnerShape';
-import { BrowserShapeUtil } from './shapes/BrowserShape';
-import AIShapeGeneratorShapeUtil from './shapes/AIShapeGeneratorShape';
-import AITerminalShapeUtil from './shapes/AITerminalShape';
+
 
 // -----------------------------------------------------------------------------
 // 🧠 AI / OS CONFIGURATION
@@ -700,16 +695,17 @@ class AgentShapeUtil extends BaseBoxShapeUtil {
 }
 
 // REGISTER CUSTOM SHAPES
+import { customShapeUtils as externalShapeUtils } from './shapes/registry';
+
+// ... (Retain locally defined shapes like Preview, Agent, Result)
+
+// REGISTER CUSTOM SHAPES
+// Combine local core shapes with external registry shapes
 const customShapeUtils = [
     PreviewShapeUtil,
     AgentShapeUtil,
     ResultShapeUtil,
-    QuizShapeUtil,
-    CameraSimulatorShapeUtil,
-    CodeRunnerShapeUtil,
-    BrowserShapeUtil,
-    AIShapeGeneratorShapeUtil,
-    AITerminalShapeUtil
+    ...externalShapeUtils
 ];
 
 export default function TldrawBoard() {
@@ -718,8 +714,8 @@ export default function TldrawBoard() {
     const [editor, setEditor] = useState(null);
 
     // GOD MODE: 动态注册 Shape 的核心引擎
-    const registerDynamicShape = () => {
-        const codeStr = `
+    const registerDynamicShape = (codeString = null) => {
+        const defaultCode = `
             import { BaseBoxShapeUtil, HTMLContainer } from 'tldraw'
             import React from 'react'
 
@@ -756,6 +752,8 @@ export default function TldrawBoard() {
             }
         `;
 
+        const codeStr = codeString || defaultCode;
+
         try {
             console.log("⚡ Compiling dynamic shape...");
             // 1. Transpile (compile JSX/TS to JS)
@@ -785,7 +783,11 @@ export default function TldrawBoard() {
             console.log("🔥 GOD MODE: Registered new shape:", UtilClass.type);
 
             // 5. Hot Swap!
-            setShapeUtils(prev => [...prev, UtilClass]);
+            setShapeUtils(prev => {
+                // Remove existing if same type to update
+                const filtered = prev.filter(u => u.type !== UtilClass.type);
+                return [...filtered, UtilClass];
+            });
 
             // 6. Create Instance (Need editor)
             if (editor) {
@@ -800,7 +802,7 @@ export default function TldrawBoard() {
                     // Center camera on it
                     editor.zoomToBounds(editor.getShapePageBounds(id), { duration: 1000 });
                 });
-                alert("⚡ God Mode Activated: New Shape Class Injected!");
+                // alert("⚡ God Mode Activated: New Shape Class Injected!");
             } else {
                 alert("Editor not ready yet, but shape registered.");
             }
@@ -811,10 +813,23 @@ export default function TldrawBoard() {
         }
     };
 
+    // Event Listener for AI Terminal to trigger shape registration
+    useEffect(() => {
+        const handleRegisterEvent = (e) => {
+            console.log("📩 Received 'tldraw-register-shape' event");
+            if (e.detail && e.detail.code) {
+                registerDynamicShape(e.detail.code);
+            }
+        };
+
+        window.addEventListener('tldraw-register-shape', handleRegisterEvent);
+        return () => window.removeEventListener('tldraw-register-shape', handleRegisterEvent);
+    }, [editor]); // Re-bind if editor changes (though functions are stable)
+
     return (
         <div style={{ position: 'fixed', inset: 0 }}>
             <Tldraw
-                persistenceKey="one-worker-os-v2"
+                persistenceKey="flush-v4-clean"
                 shapeUtils={shapeUtils}
                 onMount={(originalEditor) => setEditor(originalEditor)}
             >
@@ -822,20 +837,7 @@ export default function TldrawBoard() {
                 <AppLauncherDock />
 
                 {/* GOD MODE BUTTON (Test Trigger) */}
-                <div style={{
-                    position: 'absolute', top: 20, right: 20, zIndex: 99999
-                }}>
-                    <button
-                        onClick={registerDynamicShape}
-                        style={{
-                            background: 'black', color: '#0f0', border: '1px solid #0f0',
-                            padding: '10px 20px', fontFamily: 'monospace', fontWeight: 'bold',
-                            cursor: 'pointer', boxShadow: '0 0 10px #0f0'
-                        }}
-                    >
-                        ⚡ TEST GOD MODE
-                    </button>
-                </div>
+                {/* GOD MODE BUTTON Removed */}
             </Tldraw>
         </div>
     );

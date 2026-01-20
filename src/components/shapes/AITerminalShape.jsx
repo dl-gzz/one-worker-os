@@ -150,6 +150,29 @@ export class AITerminalShapeUtil extends BaseBoxShapeUtil {
                                         props: act.props || {}
                                     });
                                 }
+                                // GOD MODE: Generate Shape Utils (Dynamic Compilation)
+                                // 动作格式: { action: "generateShapeUtils", code: "..." }
+                                else if (act.action === 'generateShapeUtils' && act.code) {
+                                    console.log('⚡ God Mode Triggered from AI:', act.code.substring(0, 50) + '...');
+                                    const event = new CustomEvent('tldraw-register-shape', {
+                                        detail: { code: act.code }
+                                    });
+                                    window.dispatchEvent(event);
+                                    replyText += `\n(⚡ 已生成并编译新组件)`;
+                                }
+                                // SOURCE MODE: Persist to File System (Self-Evolution)
+                                // 动作格式: { action: "createSourceComponent", shapeName: "Stock", code: "..." }
+                                else if (act.action === 'createSourceComponent' && act.shapeName && act.code) {
+                                    console.log('🧬 Source Mode Triggered (Redirected to God Mode):', act.shapeName);
+
+                                    // ⚡ 关键修改：不再写入文件导致刷新，而是使用 God Mode 动态注入
+                                    const event = new CustomEvent('tldraw-register-shape', {
+                                        detail: { code: act.code }
+                                    });
+                                    window.dispatchEvent(event);
+
+                                    replyText += `\n(⚡ 已在运行时动态生成组件: ${act.shapeName})`;
+                                }
                                 // DELETE (新增支持)
                                 else if (act.action === 'deleteShape' && act.id) {
                                     console.log('🔧 Execute deleteShape:', act);
@@ -229,15 +252,20 @@ export class AITerminalShapeUtil extends BaseBoxShapeUtil {
                         </div>
                     </div>
 
-                    {/* 消息历史区 */}
-                    <div style={{
-                        flex: 1,
-                        overflowY: 'auto',
-                        padding: '16px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 16
-                    }}>
+                    {/* 消息历史区 - 增加自定义滚动条样式 (已移至 App.css) */}
+                    <div
+                        className="ai-terminal-scroll"
+                        onPointerDown={(e) => e.stopPropagation()} // 防止拖拽 Shape 时误触，也允许选中文字
+                        style={{
+                            flex: 1,
+                            overflowY: 'auto',
+                            padding: '16px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 16,
+                            pointerEvents: 'auto' // 确保内部可以交互
+                        }}
+                    >
                         {messages.length === 0 && (
                             <div style={{
                                 textAlign: 'center',
@@ -254,8 +282,8 @@ export class AITerminalShapeUtil extends BaseBoxShapeUtil {
                             <div key={i} style={{
                                 alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
                                 maxWidth: '85%',
-                                fontSize: 13,
-                                lineHeight: '1.5'
+                                fontSize: 18, // 字体增大到 18px
+                                lineHeight: '1.6'
                             }}>
                                 <div style={{
                                     padding: '8px 12px',
