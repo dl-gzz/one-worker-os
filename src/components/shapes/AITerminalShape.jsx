@@ -105,19 +105,35 @@ export class AITerminalShapeUtil extends BaseBoxShapeUtil {
                 let actions = [];
 
                 try {
-                    // 匹配 ```json ... ``` 或 直接 {...}
-                    const jsonMatch = response.text.match(/```json\n([\s\S]*?)\n```/) || response.text.match(/(\{[\s\S]*"actions"[\s\S]*\})/);
+                    // 改进后的 Regex：不仅匹配 ```json ... ```，也匹配 ``` ... ``` (要是内容像 JSON)，以及纯文本 JSON
+                    const jsonMatch =
+                        response.text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) ||
+                        response.text.match(/(\{[\s\S]*"action"[\s\S]*\})/i) ||
+                        response.text.match(/(\{[\s\S]*"actions"[\s\S]*\})/i);
 
                     if (jsonMatch) {
                         const jsonStr = jsonMatch[1] || jsonMatch[0];
-                        const data = JSON.parse(jsonStr);
+                        try {
+                            const data = JSON.parse(jsonStr);
 
-                        // 优先显示 message，如果没有则显示 JSON 字符串
-                        if (data.message) replyText = data.message;
-                        else if (!replyText) replyText = "(执行指令)";
+                            // 优先显示 message，如果没有则显示 JSON 字符串
+                            if (data.message) replyText = data.message;
+                            else if (!replyText) replyText = "(执行指令)";
 
-                        if (data.actions && Array.isArray(data.actions)) {
-                            actions = data.actions;
+                            // 情况 1: data 本身就是 actions 数组
+                            if (Array.isArray(data)) {
+                                actions = data;
+                            }
+                            // 情况 2: data 包含 actions 数组
+                            else if (data.actions && Array.isArray(data.actions)) {
+                                actions = data.actions;
+                            }
+                            // 情况 3: data 本身就是单个 action 对象 (e.g. { action: "generateShapeUtils" })
+                            else if (data.action) {
+                                actions = [data];
+                            }
+                        } catch (parseErr) {
+                            console.warn('JSON Parse Error:', parseErr);
                         }
                     }
                 } catch (e) {
@@ -186,6 +202,15 @@ export class AITerminalShapeUtil extends BaseBoxShapeUtil {
                     });
                     replyText += '\n✨ 指令已执行';
                 }
+
+                // 4.5. 检查并执行自动刷新代码
+                const jsCodeMatch = replyText.match(/```javascript([^`]*)```/);
+                if (jsCodeMatch) {
+                    const jsCode = jsCodeMatch[1].trim();
+                    console.log("🔄 检测到自动刷新代码:", jsCode);
+                    try { eval(jsCode); } catch (err) { console.error("执行失败:", err); }
+                }
+
 
                 // 5. 更新 UI：添加 AI 回复
                 editor.updateShape({

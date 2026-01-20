@@ -1,0 +1,69 @@
+.todo-card {
+  width: 300px;
+  background-color: #1e1e1e; /* Dark background */
+  border-radius: 8px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+.todo-card-header {
+  height: 32px;
+  background-color: #4a4a4a; /* Grey title bar */
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  cursor: grab; /* Indicates draggable */
+  user-select: none;
+}
+
+.todo-card-title {
+  color: #e0e0e0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.todo-card-content {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.todo-input-group {
+  display: flex;
+  gap: 8px;
+}
+
+.todo-input {
+  flex: 1;
+  background-color: #2d2d2d;
+  border: 1px solid #3e3e3e;
+  border-radius: 4px;
+  padding: 8px;
+  color: #fff;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.todo-input:focus {
+  border-color: #007acc;
+}
+
+.todo-add-btn {
+  background-color: #007acc;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0 16px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.todo-add-btn:hover {
+  background-color: #0062a3;
+}

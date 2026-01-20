@@ -4,6 +4,7 @@ import Pomodoro from './components/Pomodoro/Pomodoro';
 import PomodoroTimer from './components/PomodoroTimer';
 import StockWidget from './components/StockWidget/StockWidget';
 import WeatherWidget from './components/WeatherWidget/WeatherWidget';
+import RedSquare from './components/RedSquare';
 import './App.css';
 
 function App() {
@@ -11,12 +12,15 @@ function App() {
     <div className="app-container">
       {/* <Whiteboard /> */}
       <TldrawBoard />
-      <div style={{ position: 'absolute', top: '20px', right: '20px', zIndex: 1000 }}>
+      {/* <div style={{ position: 'absolute', top: '20px', right: '20px', zIndex: 1000 }}>
         <WeatherWidget />
-      </div>
+      </div> */}
+      {/* <div style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 1000 }}>
+        <RedSquare />
+      </div> */}
       {/* <PomodoroTimer /> */}
       {/* <Calculator /> */}
-      <StockWidget />
+      {/* <StockWidget /> */}
       {/* <Pomodoro /> */}
     </div>
   );

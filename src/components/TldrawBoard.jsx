@@ -12,7 +12,7 @@ import 'tldraw/tldraw.css';
 const AI_AGENT_NAME = "AaaS Copilot";
 // ⚠️ SECURITY: Never commit API keys to git! Use environment variables instead.
 // Create a .env file in the project root with: VITE_GEMINI_API_KEY=your_key_here
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
+const API_KEY = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
 const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
 
 // Debug mode: Set to true to see detailed pipeline logs
@@ -696,6 +696,7 @@ class AgentShapeUtil extends BaseBoxShapeUtil {
 
 // REGISTER CUSTOM SHAPES
 import { customShapeUtils as externalShapeUtils } from './shapes/registry';
+import { RedSquareShapeUtil } from './shapes/RedSquareShape';
 
 // ... (Retain locally defined shapes like Preview, Agent, Result)
 
@@ -705,6 +706,7 @@ const customShapeUtils = [
     PreviewShapeUtil,
     AgentShapeUtil,
     ResultShapeUtil,
+    RedSquareShapeUtil,
     ...externalShapeUtils
 ];
 
@@ -1093,6 +1095,9 @@ function AppLauncherDock() {
     const [customApps, setCustomApps] = useState([]);
     const [showAppStore, setShowAppStore] = useState(false);
 
+    // 删除确认对话框状态
+    const [deleteConfirm, setDeleteConfirm] = useState(null); // { shapeType, label }
+
     // Load custom apps from localStorage on mount
     useEffect(() => {
         const saved = localStorage.getItem('customDockApps');
@@ -1105,19 +1110,27 @@ function AppLauncherDock() {
         }
     }, []);
 
-    // Built-in apps
+    // Built-in apps (核心系统组件)
     const builtInApps = [
-        { id: 'ai_agent', icon: '🤖', label: 'AI Agent', type: 'ai_agent', props: { status: 'idle', task: 'New Agent' }, builtin: true },
-        { id: 'code_runner', icon: '💻', label: 'Code Runner', type: 'code_runner', props: {}, builtin: true },
         { id: 'browser', icon: '🌐', label: 'Browser', type: 'browser', props: {}, builtin: true },
-        { id: 'camera', icon: '📷', label: 'Camera Ref', type: 'camera_simulator', props: {}, builtin: true },
-        { id: 'quiz', icon: '🎓', label: 'Quiz', type: 'quiz', props: { question: 'New Question', options: ['A', 'B'], correctAnswer: 0 }, builtin: true },
-        { id: 'ai_shape_factory', icon: '🏭', label: 'Shape Factory', type: 'ai_shape_generator', props: {}, builtin: true },
         { id: 'ai_terminal', icon: '💬', label: 'AI Terminal', type: 'ai_terminal', props: {}, builtin: true },
     ];
 
-    // Combine built-in and custom apps
-    const allApps = [...builtInApps, ...customApps];
+    // 🔥 动态注册表组件 (自动从 registry.js 读取)
+    const registryApps = externalShapeUtils
+        .filter(util => !builtInApps.find(app => app.type === util.type)) // 避免重复
+        .map(util => ({
+            id: util.type,
+            icon: '🧩', // 默认图标（未来可以让 AI 在组件里定义 static dockIcon）
+            label: util.type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '), // 自动生成标签
+            type: util.type,
+            props: {},
+            builtin: true,
+            isRegistry: true // 标记为可删除的 registry 组件
+        }));
+
+    // Combine built-in, registry, and custom apps
+    const allApps = [...builtInApps, ...registryApps, ...customApps];
 
     const createApp = (app) => {
         const center = editor.getViewportPageBounds().center;
@@ -1128,6 +1141,43 @@ function AppLauncherDock() {
             y: center.y - 100 + (Math.random() * 40 - 20),
             props: app.props
         });
+    };
+
+    const deleteRegistryApp = async (shapeType) => {
+        console.log('🗑️ 开始删除组件:', shapeType);
+
+        try {
+            const url = 'http://localhost:3008/api/shapes/delete';
+            console.log('📡 发送请求到:', url);
+
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shapeType })
+            });
+
+            console.log('📨 收到响应:', res.status, res.statusText);
+
+            if (!res.ok) {
+                const errorText = await res.text();
+                console.error('❌ HTTP 错误:', errorText);
+                throw new Error(`HTTP ${res.status}: ${errorText}`);
+            }
+
+            const data = await res.json();
+            console.log('📄 响应数据:', data);
+
+            if (data.success) {
+                console.log(`✅ 删除成功: ${data.file}`);
+                // 直接刷新，无需 alert
+                window.location.reload();
+            } else {
+                alert(`❌ 删除失败: ${data.error}`);
+            }
+        } catch (error) {
+            console.error('💥 删除过程出错:', error);
+            alert(`❌ 删除失败: ${error.message}`);
+        }
     };
 
     const removeCustomApp = (appId) => {
@@ -1200,34 +1250,47 @@ function AppLauncherDock() {
                                 }} />
                             )}
                         </button>
-                        {/* Remove button for custom apps */}
-                        {!app.builtin && (
+                        {/* Remove button for custom apps and registry apps */}
+                        {(!app.builtin || app.isRegistry) && (
                             <button
+                                className="dock-delete-btn"
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    removeCustomApp(app.id);
+                                    if (app.isRegistry) {
+                                        deleteRegistryApp(app.type);
+                                    } else {
+                                        removeCustomApp(app.id);
+                                    }
                                 }}
                                 style={{
                                     position: 'absolute',
                                     top: -4,
                                     right: -4,
-                                    width: 16,
-                                    height: 16,
+                                    width: 18,
+                                    height: 18,
                                     borderRadius: '50%',
                                     border: 'none',
                                     background: '#ef4444',
                                     color: 'white',
-                                    fontSize: 10,
+                                    fontSize: 12,
+                                    fontWeight: 'bold',
                                     cursor: 'pointer',
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
-                                    opacity: 0,
-                                    transition: 'opacity 0.2s'
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                    transition: 'all 0.2s',
+                                    zIndex: 10
                                 }}
-                                onMouseEnter={e => e.currentTarget.style.opacity = '1'}
-                                onMouseLeave={e => e.currentTarget.style.opacity = '0'}
-                                title="Remove from Dock"
+                                onMouseEnter={e => {
+                                    e.currentTarget.style.transform = 'scale(1.2)';
+                                    e.currentTarget.style.background = '#dc2626';
+                                }}
+                                onMouseLeave={e => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.background = '#ef4444';
+                                }}
+                                title={app.isRegistry ? "删除组件（源文件）" : "从 Dock 移除"}
                             >
                                 ×
                             </button>
@@ -1484,54 +1547,24 @@ function BoardLogic() {
     // -------------------------------------------------------------------------
     // 🧠 AI SYSTEM PROMPT
     // -------------------------------------------------------------------------
-    const SYSTEM_PROMPT = `You are the OS Kernel for a spatial canvas.
-    You have FULL control to create and modify shapes.
-    
-    🌍 LANGUAGE RULE:
-    - You MUST use Chinese(简体中文) for the "thought" field and any voice responses.
-    - If creating an Agent, the 'task' description should be in Chinese(e.g., "翻译成英文").
+        const SYSTEM_PROMPT = `You are an expert Courseware Designer & Developer.
+You specialize in creating interactive, visually stunning educational tools.
 
-        CAPABILITIES:
-    1. Create sticky notes for text / knowledge.
-    2. Create arrows to connect ideas.
-    3. 🚀 GENERATE APPS: If the user asks for a tool, game, or utility(e.g. "calculator", "clock", "snake game"),
-        create a 'preview_html' shape. 
-       Return JSON: { action: "create", type: "preview_html", props: { html: "<html>...REALLY COOL MODERN UI...</html>", w: 480, h: 640 } }
-       Ensure the HTML is fully functional(embedded CSS / JS).
-    4. 🤖 CREATE AGENTS: If the user asks for an AI processor(e.g. "translator", "summarizer"),
-        create an 'ai_agent' shape.
-       Return JSON: { action: "create", type: "ai_agent", props: { task: "Translate to English", status: "idle" } }
-    5. 📝 CREATE QUIZ: If user asks for a quiz or practice question,
-        create a 'quiz' shape.
-       Return JSON: { action: "create", type: "quiz", props: { question: "...", options: [...], correctAnswer: 0 } }
-    6. 📷 CREATE CAMERA: If user asks for a camera simulator,
-        create a 'camera_simulator' shape.
-       Return JSON: { action: "create", type: "camera_simulator", props: { } }
-    7. 🔗 CREATE CONNECTED WORKFLOWS: If user asks to connect shapes or create a workflow:
-    - First create the shapes
-        - Then create arrows with PROPER BINDINGS
-            - Arrow format: {
-                action: "create", type: "arrow", props: {
-                    start: { x: 0, y: 0 },
-                    end: { x: 100, y: 100 }
-                }
-            }
-    
-    RESPONSE FORMAT(JSON ONLY):
-    {
-        "thought": "Reasoning...",
-            "operations": [
-                { "action": "create", "type": "ai_result", "props": { "text": "..." }, "x": 0, "y": 0 },
-                { "action": "update", "id": "...", "props": { ... } }
-            ],
-                "voice_response": "Optional spoken text"
-    }
-    
-    CONTEXT AWARENESS:
-    I will provide the selected shapes.Use them!
-        - If user says "Make this red", update the selected shape.
-    - If user says "Summarize this", read the selected text.
-    - If user says "Connect these", create arrows between selected shapes.
+🎓 EXPERTISE: Instructional Design, Visual Design, Interactive Components, Presentation Tools
+
+🌍 LANGUAGE: Use Chinese(简体中文) for "thought" and voice responses.
+
+🚀 COURSEWARE CAPABILITIES:
+1. 📊 SLIDES: Create 'preview_html' with navigation
+2. 📝 QUIZZES: Create 'quiz' with feedback
+3. 🎯 FLASHCARDS: Create flip animations
+4. ⏱️ TIMELINES: Visual event timelines
+5. 📚 KNOWLEDGE CARDS: Create 'ai_result' for concepts
+
+RESPONSE FORMAT (JSON):
+{"thought": "中文思考...", "operations": [...], "voice_response": "..."}
+
+💡 DESIGN RULES: Include navigation, visual feedback, professional colors, progress indicators, readable text (14px+, line-height 1.6)
     `;
 
     // -------------------------------------------------------------------------
@@ -1577,7 +1610,7 @@ function BoardLogic() {
                 contents: [{ parts: [{ text: finalPrompt }] }]
             };
 
-            const res = await fetch(`${API_ENDPOINT}?key = ${API_KEY} `, {
+            const res = await fetch(`${API_ENDPOINT}?key=${API_KEY}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body)
@@ -1593,6 +1626,8 @@ function BoardLogic() {
             }
 
             // 3. Parse JSON & Execute
+            console.log("📨 AI 原始响应:", responseText);
+
             const jsonMatch = responseText.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const jsonStr = jsonMatch[0];

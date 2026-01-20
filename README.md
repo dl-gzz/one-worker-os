@@ -1,16 +1,383 @@
-# React + Vite
+# One Worker OS - AI 驱动的智能白板系统
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+<div align="center">
 
-Currently, two official plugins are available:
+![One Worker OS](https://img.shields.io/badge/One%20Worker%20OS-v1.0-blue)
+![React](https://img.shields.io/badge/React-18.3-61dafb?logo=react)
+![Tldraw](https://img.shields.io/badge/Tldraw-2.0-000000)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+**一个基于 Tldraw 的 AI 驱动智能白板，支持动态组件生成、课件制作和实时协作**
 
-## React Compiler
+[功能特性](#功能特性) • [快速开始](#快速开始) • [使用指南](#使用指南) • [开发文档](#开发文档)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+</div>
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 📖 项目简介
+
+One Worker OS 是一个创新的智能白板系统，结合了 **Tldraw** 的强大绘图能力和 **AI** 的智能生成能力。它不仅是一个白板工具，更是一个可以自我进化的操作系统。
+
+### 核心特性
+
+- 🎨 **无限画布**：基于 Tldraw 的流畅绘图体验
+- 🤖 **AI 驱动**：支持 Google Gemini 和本地 OpenCode AI
+- 🧩 **动态组件**：AI 自动生成并注册新组件
+- 📚 **课件制作**：专为教育场景优化的 AI 提示词
+- 🔄 **自动刷新**：组件创建后自动加载，无需手动刷新
+- 🗑️ **组件管理**：可视化删除组件，支持源文件清理
+
+---
+
+## 🚀 功能特性
+
+### 1. 全局 AI 助手（✨ 按钮）
+
+点击右下角的 ✨ 按钮，唤醒全局 AI：
+
+- **快速创建组件**："做一个计算器"、"做一个时钟"
+- **上下文感知**：选中元素后，AI 可以理解并操作它们
+- **语音输入**：支持语音转文字（需 Chrome/Edge）
+- **课件专家**：内置教学设计知识，擅长制作互动课件
+
+**示例指令：**
+```
+- "做一个小学数学课件，包含认识图形和加减法"
+- "把这个改成红色"
+- "总结这段文字"
+- "做成幻灯片"
+```
+
+### 2. AI Terminal（💬 组件）
+
+从 Dock 拖出 AI Terminal，进行深度对话：
+
+- **组件生成**：通过 OpenCode 本地 AI 生成持久化组件
+- **自动注册**：生成的组件自动写入文件系统并注册
+- **自动刷新**：创建完成后 1.5 秒自动刷新页面
+
+**工作流程：**
+```
+1. 在 AI Terminal 输入："做一个番茄时钟"
+2. AI 创建 PomodoroShape.jsx
+3. 自动更新 registry.js
+4. 页面自动刷新
+5. Dock 里出现 🧩 Pomodoro 按钮
+```
+
+### 3. 动态 Dock 系统
+
+底部工具栏自动显示所有可用组件：
+
+- **核心组件**：Browser（🌐）、AI Terminal（💬）
+- **Registry 组件**：所有通过 AI 创建的组件（🧩 图标）
+- **自定义组件**：通过 App Store 保存的组件
+- **删除功能**：鼠标悬停显示 × 按钮，点击删除源文件
+
+### 4. 组件删除系统
+
+- **可视化删除**：悬停在 🧩 图标上，点击红色 × 按钮
+- **源文件清理**：自动删除 `.jsx` 文件并更新 `registry.js`
+- **自动刷新**：删除后自动刷新页面
+
+---
+
+## 🛠️ 快速开始
+
+### 环境要求
+
+- **Node.js**: >= 18.0
+- **npm**: >= 9.0
+- **浏览器**: Chrome/Edge（推荐）或 Firefox
+
+### 安装步骤
+
+1. **克隆项目**
+```bash
+git clone https://github.com/your-username/one-worker-os.git
+cd one-worker-os
+```
+
+2. **安装依赖**
+```bash
+npm install
+```
+
+3. **配置环境变量**
+```bash
+cp .env.example .env
+```
+
+编辑 `.env` 文件，填入你的 API Key：
+```env
+# Google Gemini API Key (用于全局 AI)
+VITE_GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+> 💡 **获取 API Key**: 访问 [Google AI Studio](https://aistudio.google.com/app/apikey)
+
+4. **启动开发服务器**
+```bash
+# 启动前端
+npm run dev
+
+# 启动后端（新终端）
+cd backend
+node server.js
+```
+
+5. **（可选）启动 OpenCode 本地 AI**
+```bash
+opencode serve
+```
+
+6. **访问应用**
+```
+http://localhost:5173
+```
+
+---
+
+## 📚 使用指南
+
+### 创建你的第一个组件
+
+#### 方法 1：使用全局 AI（快速）
+
+1. 点击右下角 ✨ 按钮
+2. 输入："做一个计数器"
+3. AI 会创建一个 HTML 组件（临时，刷新后消失）
+
+#### 方法 2：使用 AI Terminal（持久化）
+
+1. 从 Dock 拖出 💬 AI Terminal
+2. 输入："做一个计数器"
+3. 等待 1.5 秒自动刷新
+4. Dock 里出现 🧩 Counter 按钮
+
+### 删除组件
+
+1. 鼠标悬停在 Dock 里的 🧩 图标上
+2. 点击右上角的红色 × 按钮
+3. 确认删除
+4. 页面自动刷新，组件消失
+
+### 制作课件
+
+全局 AI 已针对课件制作优化，支持：
+
+- 📊 **演示文稿**：多页幻灯片，带导航
+- 📝 **互动测验**：选择题、判断题，即时反馈
+- 🎯 **翻转卡片**：单词卡、知识点记忆
+- ⏱️ **时间轴**：历史事件、项目规划
+- 🎬 **多媒体播放器**：视频/音频嵌入
+
+**示例：**
+```
+"做一个关于太阳系的演示文稿，包含8大行星"
+"做一个英语单词卡片，主题是动物"
+"做一个中国历史时间轴"
+```
+
+---
+
+## 🔧 开发文档
+
+### 项目结构
+
+```
+one-worker-os/
+├── src/
+│   ├── components/
+│   │   ├── shapes/              # 自定义 Tldraw 组件
+│   │   │   ├── registry.js      # 组件注册表
+│   │   │   ├── BrowserShape.jsx
+│   │   │   ├── AITerminalShape.jsx
+│   │   │   └── ...              # AI 生成的组件
+│   │   └── TldrawBoard.jsx      # 主白板组件
+│   ├── App.jsx
+│   └── main.jsx
+├── backend/
+│   └── server.js                # Express 后端（OpenCode 代理、删除 API）
+├── .env                         # 环境变量（不提交到 Git）
+├── .env.example                 # 环境变量模板
+├── AI_INSTRUCTIONS.md           # AI 系统提示词
+├── COURSEWARE_PROMPT.md         # 课件制作专家提示词
+└── README.md
+```
+
+### 创建自定义组件
+
+#### 1. 手动创建
+
+在 `src/components/shapes/` 下创建 `MyShape.jsx`：
+
+```javascript
+import { BaseBoxShapeUtil, HTMLContainer } from 'tldraw';
+
+export class MyShapeUtil extends BaseBoxShapeUtil {
+    static type = 'my_shape';
+
+    getDefaultProps() {
+        return { w: 300, h: 200, title: 'My Component' };
+    }
+
+    component(shape) {
+        return (
+            <HTMLContainer style={{ pointerEvents: 'all' }}>
+                <div style={{ width: '100%', height: '100%', background: '#1e1e1e', color: '#fff' }}>
+                    <div style={{ height: 32, background: '#3498db', padding: '0 8px', cursor: 'grab' }}>
+                        {shape.props.title}
+                    </div>
+                    <div style={{ padding: 12 }}>
+                        <button onPointerDown={e => e.stopPropagation()}>
+                            Click Me
+                        </button>
+                    </div>
+                </div>
+            </HTMLContainer>
+        );
+    }
+
+    indicator(shape) {
+        return <rect width={shape.props.w} height={shape.props.h} />;
+    }
+}
+```
+
+#### 2. 注册组件
+
+编辑 `src/components/shapes/registry.js`：
+
+```javascript
+import { MyShapeUtil } from './MyShape';
+
+export const customShapeUtils = [
+    // ... 其他组件
+    MyShapeUtil,
+];
+```
+
+#### 3. 刷新页面
+
+组件会出现在 Dock 里。
+
+### API 接口
+
+#### 删除组件
+
+```http
+POST /api/shapes/delete
+Content-Type: application/json
+
+{
+  "shapeType": "my_shape"
+}
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "message": "Deleted my_shape",
+  "file": "MyShape.jsx"
+}
+```
+
+---
+
+## 🎓 教学场景示例
+
+### 小学数学课
+
+```
+"做一个小学一年级数学课件，包含：
+1. 认识图形（圆形、正方形、三角形）
+2. 10以内加减法练习
+3. 互动测验"
+```
+
+### 英语学习
+
+```
+"做一个英语单词卡片应用，主题是水果，包含：
+- 单词
+- 图片
+- 发音按钮
+- 翻转查看中文"
+```
+
+### 历史教学
+
+```
+"做一个中国古代朝代时间轴，从夏朝到清朝，
+包含每个朝代的：
+- 起止年份
+- 重要事件
+- 代表人物"
+```
+
+---
+
+## 🔐 安全注意事项
+
+### API Key 保护
+
+- ✅ **使用 `.env` 文件**存储 API Key
+- ✅ **`.gitignore` 已配置**，不会提交 `.env`
+- ❌ **永远不要**在代码里硬编码 API Key
+- ❌ **永远不要**提交 `.env` 到 GitHub
+
+### 检查 .gitignore
+
+确保 `.gitignore` 包含：
+```
+.env
+.env.local
+node_modules/
+dist/
+```
+
+---
+
+## 🤝 贡献指南
+
+欢迎贡献代码、报告问题或提出建议！
+
+1. Fork 本项目
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
+
+---
+
+## 📄 许可证
+
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+
+---
+
+## 🙏 致谢
+
+- [Tldraw](https://tldraw.dev/) - 强大的白板引擎
+- [Google Gemini](https://ai.google.dev/) - AI 能力支持
+- [OpenCode](https://github.com/your-opencode-link) - 本地 AI 服务
+
+---
+
+## 📞 联系方式
+
+- **问题反馈**: [GitHub Issues](https://github.com/your-username/one-worker-os/issues)
+- **讨论交流**: [GitHub Discussions](https://github.com/your-username/one-worker-os/discussions)
+
+---
+
+<div align="center">
+
+**⭐ 如果这个项目对你有帮助，请给个 Star！**
+
+Made with ❤️ by [Your Name]
+
+</div>

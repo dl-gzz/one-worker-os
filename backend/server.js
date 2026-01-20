@@ -199,6 +199,58 @@ app.get('/instructions', (req, res) => {
     }
 });
 
+// 🗑️ DELETE SHAPE COMPONENT
+app.post('/api/shapes/delete', (req, res) => {
+    try {
+        const { shapeType } = req.body;
+        if (!shapeType) {
+            return res.status(400).json({ error: 'Missing shapeType' });
+        }
+
+        const projectRoot = path.join(__dirname, '..');
+        const shapeDir = path.join(projectRoot, 'src/components/shapes');
+        const registryPath = path.join(shapeDir, 'registry.js');
+
+        // 1. 查找并删除 .jsx 文件
+        const files = fs.readdirSync(shapeDir);
+        const targetFile = files.find(f => {
+            const content = fs.readFileSync(path.join(shapeDir, f), 'utf8');
+            return content.includes(`static type = '${shapeType}'`);
+        });
+
+        if (targetFile && targetFile.endsWith('.jsx')) {
+            const filePath = path.join(shapeDir, targetFile);
+            fs.unlinkSync(filePath);
+            console.log(`🗑️ Deleted file: ${targetFile}`);
+        }
+
+        // 2. 更新 registry.js
+        let registryContent = fs.readFileSync(registryPath, 'utf8');
+
+        // 移除 import 语句（匹配任何包含该文件名的 import）
+        if (targetFile) {
+            const importPattern = new RegExp(`import.*from\\s+['"]\\.\\/${targetFile.replace('.jsx', '')}['"];?\\n`, 'g');
+            registryContent = registryContent.replace(importPattern, '');
+        }
+
+        // 移除数组中的注册项（通过匹配 ShapeUtil 类名）
+        const utilClassName = targetFile ? targetFile.replace('.jsx', 'Util') : null;
+        if (utilClassName) {
+            const arrayPattern = new RegExp(`\\s*${utilClassName},?\\n`, 'g');
+            registryContent = registryContent.replace(arrayPattern, '');
+        }
+
+        fs.writeFileSync(registryPath, registryContent, 'utf8');
+        console.log(`📝 Updated registry.js`);
+
+        res.json({ success: true, message: `Deleted ${shapeType}`, file: targetFile });
+
+    } catch (error) {
+        console.error('Delete shape error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // 启动服务器
 app.listen(PORT, () => {
     console.log(`🚀 Backend server running on http://localhost:${PORT}`);
