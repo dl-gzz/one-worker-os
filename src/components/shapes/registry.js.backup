@@ -1,0 +1,26 @@
+import { BrowserShapeUtil } from './BrowserShape';
+import { AITerminalShapeUtil } from './AITerminalShape';
+import { HorseYearAlarmClockShapeUtil } from './HorseYearAlarmClockShape';
+import { HorseYearCalendarShapeUtil } from './HorseYearCalendarShape';
+import { BlackGoldTimerShapeUtil } from './BlackGoldTimerShape';
+import { DragonHorseSpiritShapeUtil } from './DragonHorseSpiritShape';
+import { HorseYearDiaryShapeUtil } from './HorseYearDiaryShape';
+import { HorseYearWorldClockShapeUtil } from './HorseYearWorldClockShape';
+import { DragonHorseGlobalClockShapeUtil } from './DragonHorseGlobalClockShape';
+import { DragonHorseMemoShapeUtil } from './DragonHorseMemoShape';
+import { DragonHorsePlayerShapeUtil } from './DragonHorsePlayerShape';
+
+// 导出所有 Shape 工具类
+export const customShapeUtils = [
+    BrowserShapeUtil,
+    AITerminalShapeUtil,    // AI_INSERT_POINT (AI 将在这里插入新的 Shape)
+    HorseYearAlarmClockShapeUtil,
+    HorseYearCalendarShapeUtil,
+    BlackGoldTimerShapeUtil,
+    DragonHorseSpiritShapeUtil,
+    HorseYearDiaryShapeUtil,
+    HorseYearWorldClockShapeUtil,
+    DragonHorseGlobalClockShapeUtil,
+    DragonHorseMemoShapeUtil,
+    DragonHorsePlayerShapeUtil,
+];

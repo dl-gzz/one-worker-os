@@ -13,7 +13,15 @@ const AI_AGENT_NAME = "AaaS Copilot";
 // ⚠️ SECURITY: Never commit API keys to git! Use environment variables instead.
 // Create a .env file in the project root with: VITE_GEMINI_API_KEY=your_key_here
 const API_KEY = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
+
+// 🎯 MODEL SELECTION - Switch between models if needed
+// - gemini-3-pro-preview: Most advanced (may have stability issues)
+// - gemini-2.0-flash-exp: Experimental, fast
+// - gemini-1.5-flash-latest: Stable, recommended for production
+// If you encounter "Empty Response" errors, try switching to gemini-1.5-flash-latest
 const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent";
+// const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"; // Stable fallback
+
 
 // Debug mode: Set to true to see detailed pipeline logs
 const DEBUG_MODE = false;
@@ -1579,6 +1587,12 @@ You are a Courseware Designer & Developer specialized in creating interactive ed
 - Beautiful: Modern UI, colors, gradients
 - Professional: 14px+ fonts, 1.6 line-height
 
+🖼️ MULTIMODAL CAPABILITIES:
+- You can see and analyze images in the context
+- If user selects an image and asks about it, analyze the visual content
+- You can reference image details in your responses
+- Combine visual analysis with code generation when relevant
+
 🌍 LANGUAGE: Use Chinese for "thought" and "voice_response"
 
 ❌ DO NOT:
@@ -1606,13 +1620,16 @@ You are a Courseware Designer & Developer specialized in creating interactive ed
         setLoading(true);
 
         try {
-            // 1. Gather Context (Selected Shapes)
+            // 1. Gather Context (Selected Shapes) - with multimodal support
             const selectedIds = editor.getSelectedShapeIds();
             let contextData = "Selected Shapes:\n";
+            const imageData = []; // Store image data for multimodal request
+
             if (selectedIds.length > 0) {
                 selectedIds.forEach(id => {
                     const shape = editor.getShape(id);
                     let content = "";
+
                     // Extract content based on shape type
                     if (shape.type === 'ai_result' || shape.type === 'text') {
                         content = `Content: "${shape.props.text}"`;
@@ -1624,6 +1641,20 @@ You are a Courseware Designer & Developer specialized in creating interactive ed
                         content = `Browser URL: "${shape.props.url || 'about:blank'}"`;
                     } else if (shape.type === 'ai_terminal') {
                         content = `AI Terminal (interactive chat component)`;
+                    } else if (shape.type === 'image') {
+                        // Extract image data for multimodal support
+                        const imgData = extractDataFromShape(editor, shape);
+                        if (imgData && imgData.type === 'image') {
+                            imageData.push({
+                                data: imgData.data,
+                                mimeType: imgData.mimeType,
+                                name: imgData.name || `image-${id}`
+                            });
+                            content = `Image: "${imgData.name || 'Unnamed'}" (${imgData.mimeType})`;
+                            console.log(`🖼️ Extracted image: ${imgData.name}, MIME: ${imgData.mimeType}`);
+                        } else {
+                            content = `Image (failed to extract)`;
+                        }
                     } else {
                         // For other types, show available props
                         const propsStr = JSON.stringify(shape.props).substring(0, 100);
@@ -1635,11 +1666,27 @@ You are a Courseware Designer & Developer specialized in creating interactive ed
                 contextData += "No shapes selected.\n";
             }
 
-            // 2. Build Request
+            // 2. Build Multimodal Request
             const finalPrompt = SYSTEM_PROMPT + "\n\nCURRENT CONTEXT:\n" + contextData + "\n\nUSER REQUEST: " + userText;
 
+            // Build parts array for multimodal support
+            const parts = [{ text: finalPrompt }];
+
+            // Add images if any
+            if (imageData.length > 0) {
+                console.log(`🎨 Adding ${imageData.length} image(s) to Gemini request`);
+                imageData.forEach(img => {
+                    parts.push({
+                        inline_data: {
+                            mime_type: img.mimeType,
+                            data: img.data
+                        }
+                    });
+                });
+            }
+
             const body = {
-                contents: [{ parts: [{ text: finalPrompt }] }]
+                contents: [{ parts }]
             };
 
             const res = await fetch(`${API_ENDPOINT}?key=${API_KEY}`, {
@@ -1649,12 +1696,60 @@ You are a Courseware Designer & Developer specialized in creating interactive ed
             });
 
             const data = await res.json();
-            const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            // Enhanced response extraction for gemini-3-pro-preview
+            let responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            // Fallback: Check alternative response locations for gemini-3-pro
+            if (!responseText && data.candidates?.[0]?.content?.parts) {
+                for (const part of data.candidates[0].content.parts) {
+                    if (part.text) {
+                        responseText = part.text;
+                        console.log("✅ Found text in parts array");
+                        break;
+                    }
+                    if (part.thought) {
+                        responseText = part.thought;
+                        console.log("✅ Found text in 'thought' field");
+                        break;
+                    }
+                }
+            }
 
             if (!responseText) {
-                console.error("AI Error Data:", data);
-                const errorMsg = data.error ? data.error.message : (data.promptFeedback ? "Blocked by Safety" : "Empty Response");
-                throw new Error("AI Error: " + errorMsg);
+                console.error("🔍 AI Error Details:", JSON.stringify(data, null, 2));
+
+                let errorMsg = "Empty Response";
+                let detailMsg = "";
+
+                // Check for specific error types
+                if (data.error) {
+                    errorMsg = data.error.message;
+                    detailMsg = `\n错误代码: ${data.error.code || 'N/A'}`;
+                } else if (data.promptFeedback) {
+                    const feedback = data.promptFeedback;
+                    errorMsg = "Blocked by Safety Filter";
+
+                    if (feedback.blockReason) {
+                        detailMsg = `\n拦截原因: ${feedback.blockReason}`;
+                    }
+                    if (feedback.safetyRatings) {
+                        detailMsg += `\n安全评级: ${JSON.stringify(feedback.safetyRatings)}`;
+                    }
+                } else if (data.candidates?.[0]?.finishReason) {
+                    const reason = data.candidates[0].finishReason;
+                    errorMsg = `Generation stopped: ${reason}`;
+                    detailMsg = `\n可能原因: ${reason === 'SAFETY' ? '内容被安全过滤器阻止' :
+                        reason === 'MAX_TOKENS' ? '达到最大token限制' :
+                            reason === 'RECITATION' ? '检测到抄袭内容' :
+                                '其他原因'
+                        }`;
+                }
+
+                console.error("❌ Error Message:", errorMsg);
+                console.error("📋 Details:", detailMsg);
+
+                throw new Error("AI Error: " + errorMsg + detailMsg);
             }
 
             // 3. Parse JSON & Execute
