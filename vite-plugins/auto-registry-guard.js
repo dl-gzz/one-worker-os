@@ -25,11 +25,23 @@ export function autoRegistryGuard() {
         return false;
     }
 
+    // 防止循环修复
+    let lastContent = '';
+    let fixCount = 0;
+    const MAX_FIX_ATTEMPTS = 3;
+
     async function checkAndFix(forceWait = false) {
         try {
             if (!fs.existsSync(REGISTRY_FILE)) return;
 
             let registryContent = fs.readFileSync(REGISTRY_FILE, 'utf-8');
+
+            // 防循环：如果内容没变，或已修复多次，跳过
+            if (registryContent === lastContent || fixCount >= MAX_FIX_ATTEMPTS) {
+                fixCount = 0; // 重置计数
+                return;
+            }
+
             let fixed = false;
 
             // 1. 提取所有导入

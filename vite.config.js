@@ -1,12 +1,24 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { autoRegistryGuard } from './vite-plugins/auto-registry-guard.js'
+import eslint from 'vite-plugin-eslint'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
-    autoRegistryGuard() // 自动修复 registry.js 中的无效引用
+    autoRegistryGuard(), // 自动修复 registry.js 中的无效引用
+    eslint({
+      cache: false,
+      include: ['src/**/*.js', 'src/**/*.jsx'],
+      exclude: ['node_modules', 'dist'],
+      // 只检查特定文件以提高性能
+      lintOnStart: false,
+      // 编辑时实时检查
+      emitWarning: true,
+      emitError: true,
+      failOnError: false, // 不阻止开发服务器，只显示错误
+    })
   ],
   server: {
     watch: {

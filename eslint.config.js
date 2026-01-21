@@ -24,6 +24,17 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // 严格检查未定义的变量
+      'no-undef': 'error',
+    },
+  },
+  // 特别针对 registry.js 的严格检查
+  {
+    files: ['**/shapes/registry.js'],
+    rules: {
+      'no-undef': 'error',
+      'no-unused-vars': 'error',
+      // 确保所有引用的类都已导入
     },
   },
 ])
