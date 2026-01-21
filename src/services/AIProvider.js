@@ -308,8 +308,8 @@ ${ruleData.content}
             if (!API_KEY) {
                 throw new Error('Missing API Key. Please set VITE_GEMINI_API_KEY in .env');
             }
-            // Use gemini-1.5-flash-latest which is an alias to the latest version
-            const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${API_KEY}`;
+            // Use gemini-3-pro-preview for advanced capabilities
+            const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${API_KEY}`;
 
             const response = await fetch(API_URL, {
                 method: 'POST',

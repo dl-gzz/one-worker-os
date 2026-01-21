@@ -12,7 +12,7 @@ const GRID_COLOR = '#e5e7eb';
 // 填入您的 OpenAI API Key (或者兼容的 DeepSeek/Moonshot/Gemini Key)
 // 注意：实际生产中请勿在前端暴露 Key，这里仅为本地演示方便。
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
-const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
+const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent";
 const API_MODEL = "gemini-3-pro-preview";
 // ==================================================================================
 

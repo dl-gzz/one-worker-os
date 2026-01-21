@@ -13,7 +13,7 @@ const AI_AGENT_NAME = "AaaS Copilot";
 // ⚠️ SECURITY: Never commit API keys to git! Use environment variables instead.
 // Create a .env file in the project root with: VITE_GEMINI_API_KEY=your_key_here
 const API_KEY = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
-const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
+const API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent";
 
 // Debug mode: Set to true to see detailed pipeline logs
 const DEBUG_MODE = false;
@@ -1545,24 +1545,50 @@ function BoardLogic() {
     // -------------------------------------------------------------------------
     // 🧠 AI SYSTEM PROMPT
     // -------------------------------------------------------------------------
-    const SYSTEM_PROMPT = `You are an expert Courseware Designer & Developer.
-You specialize in creating interactive, visually stunning educational tools.
+    const SYSTEM_PROMPT = `⚠️ CRITICAL JSON-ONLY MODE ⚠️
 
-🎓 EXPERTISE: Instructional Design, Visual Design, Interactive Components, Presentation Tools
+You are a Courseware Designer & Developer specialized in creating interactive educational tools.
 
-🌍 LANGUAGE: Use Chinese(简体中文) for "thought" and voice responses.
+🚨 ABSOLUTE RULE: You MUST respond with VALID JSON ONLY. No explanations, no markdown, no code blocks.
 
-🚀 COURSEWARE CAPABILITIES:
-1. 📊 SLIDES: Create 'preview_html' with navigation
-2. 📝 QUIZZES: Create 'quiz' with feedback
-3. 🎯 FLASHCARDS: Create flip animations
-4. ⏱️ TIMELINES: Visual event timelines
-5. 📚 KNOWLEDGE CARDS: Create 'ai_result' for concepts
+📋 REQUIRED JSON FORMAT:
+{
+  "thought": "中文思考过程",
+  "voice_response": "中文语音反馈",
+  "operations": [
+    {
+      "action": "create",
+      "type": "preview_html",
+      "props": {
+        "w": 600,
+        "h": 400,
+        "html": "完整的HTML代码..."
+      }
+    }
+  ]
+}
 
-RESPONSE FORMAT (JSON):
-{"thought": "中文思考...", "operations": [...], "voice_response": "..."}
+🎯 SUPPORTED TYPES:
+- "preview_html": Full HTML applications/slides with CSS/JS
+- "ai_result": Text cards (props: {text: "...", w: 300, h: 200})
+- "arrow": Connections (props: {start: {x, y}, end: {x, y}})
 
-💡 DESIGN RULES: Include navigation, visual feedback, professional colors, progress indicators, readable text (14px+, line-height 1.6)
+💡 HTML REQUIREMENTS (for preview_html):
+- Self-contained: Include ALL CSS/JS inline
+- Interactive: Use onclick, animations, transitions
+- Beautiful: Modern UI, colors, gradients
+- Professional: 14px+ fonts, 1.6 line-height
+
+🌍 LANGUAGE: Use Chinese for "thought" and "voice_response"
+
+❌ DO NOT:
+- Return explanatory text
+- Use markdown code blocks
+- Explain what you will do
+- Return anything except pure JSON
+
+✅ EXAMPLE RESPONSE:
+{"thought":"我将创建一个太阳系幻灯片，包含8大行星介绍","voice_response":"好的，我已经为您创建了太阳系演示文稿","operations":[{"action":"create","type":"preview_html","props":{"w":800,"h":600,"html":"<!DOCTYPE html><html><head><style>body{margin:0;padding:20px;background:#000;color:#fff;font-family:Arial}</style></head><body><h1>太阳系</h1></body></html>"}}]}
     `;
 
     // -------------------------------------------------------------------------
@@ -1587,15 +1613,23 @@ RESPONSE FORMAT (JSON):
                 selectedIds.forEach(id => {
                     const shape = editor.getShape(id);
                     let content = "";
-                    // Extract text/code content
+                    // Extract content based on shape type
                     if (shape.type === 'ai_result' || shape.type === 'text') {
                         content = `Content: "${shape.props.text}"`;
                     } else if (shape.type === 'preview_html') {
-                        content = `Code: "${shape.props.html}"`;
+                        content = `Code: "${shape.props.html?.substring(0, 200)}..."`;
                     } else if (shape.type === 'ai_agent') {
                         content = `Agent Task: "${shape.props.task}"`;
+                    } else if (shape.type === 'browser') {
+                        content = `Browser URL: "${shape.props.url || 'about:blank'}"`;
+                    } else if (shape.type === 'ai_terminal') {
+                        content = `AI Terminal (interactive chat component)`;
+                    } else {
+                        // For other types, show available props
+                        const propsStr = JSON.stringify(shape.props).substring(0, 100);
+                        content = `Props: ${propsStr}...`;
                     }
-                    contextData += "- ID: " + shape.id + ", Type: " + shape.type + ", " + content + ", Positions: x=" + Math.round(shape.x) + ", y=" + Math.round(shape.y) + "\n";
+                    contextData += "- ID: " + shape.id + ", Type: " + shape.type + ", " + content + ", Size: " + Math.round(shape.props.w || 0) + "x" + Math.round(shape.props.h || 0) + "\n";
                 });
             } else {
                 contextData += "No shapes selected.\n";
@@ -1783,6 +1817,49 @@ RESPONSE FORMAT (JSON):
                         display: 'flex', flexDirection: 'column',
                         pointerEvents: 'all' // Content interactive
                     }}>
+                        {/* Header with Clear Button */}
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            marginBottom: 12,
+                            paddingBottom: 8,
+                            borderBottom: '1px solid #e5e7eb'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: 16 }}>✨</span>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: '#111' }}>AI 助手</span>
+                                <span style={{
+                                    fontSize: 10,
+                                    padding: '2px 6px',
+                                    background: '#dbeafe',
+                                    color: '#1e40af',
+                                    borderRadius: 4,
+                                    fontWeight: 500
+                                }}>Gemini 3 Pro</span>
+                            </div>
+                            <button
+                                onClick={() => setMessages([{ role: 'system', text: '已切换至 Tldraw (DOM) 架构。我是您的全能 OS 助手。' }])}
+                                style={{
+                                    padding: '4px 8px',
+                                    fontSize: 11,
+                                    border: '1px solid #e5e7eb',
+                                    background: '#fff',
+                                    borderRadius: 6,
+                                    cursor: 'pointer',
+                                    color: '#666',
+                                    fontWeight: 500,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 4
+                                }}
+                                title="清空对话历史"
+                            >
+                                🗑️ 清空
+                            </button>
+                        </div>
+
+                        {/* Messages */}
                         <div style={{ flex: 1, overflowY: 'auto', marginBottom: 12, minHeight: 100, fontSize: 13, gap: 12, display: 'flex', flexDirection: 'column' }}>
                             {messages.map((m, i) => (
                                 <div key={i} style={{
