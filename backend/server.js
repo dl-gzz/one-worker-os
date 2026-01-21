@@ -1,6 +1,7 @@
 // 简单的 Express 后端服务器
 // 用于处理数据库查询请求
 
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg'); // PostgreSQL
@@ -251,6 +252,136 @@ app.post('/api/shapes/delete', (req, res) => {
     }
 });
 
+// 💬 QUOTE API - 随机名言
+app.get('/api/quote', async (req, res) => {
+    try {
+        console.log('📖 Fetching random quote...');
+
+        // 调用 Quotable API（免费，无需 API Key）
+        const response = await fetch('https://dummyjson.com/quotes/random');
+
+        if (!response.ok) {
+            throw new Error(`Quotable API returned ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 返回格式化的数据
+        res.json({
+            content: data.quote,
+            author: data.author,
+            tags: data.tags,
+            length: data.length
+        });
+
+        console.log(`✅ Quote fetched: "${data.quote.substring(0, 50)}..." - ${data.author}`);
+
+    } catch (error) {
+        console.error('❌ Quote API Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 📈 STOCK API - 股票行情（演示如何添加需要外部服务的 API）
+app.get('/api/stock/:symbol', async (req, res) => {
+    try {
+        const { symbol } = req.params;
+        const { range = '1d', interval = '1d' } = req.query;
+
+        console.log(`📊 Fetching stock data for ${symbol}...`);
+
+        // 调用 Yahoo Finance API（免费，无需 API Key）
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`;
+
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            throw new Error(`Yahoo Finance API returned ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.chart && data.chart.result && data.chart.result.length > 0) {
+            const result = data.chart.result[0];
+            const meta = result.meta;
+
+            // 提取关键数据
+            const stockData = {
+                symbol: meta.symbol,
+                price: meta.regularMarketPrice,
+                currency: meta.currency,
+                previousClose: meta.previousClose,
+                change: meta.regularMarketPrice - meta.previousClose,
+                changePercent: ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose * 100).toFixed(2),
+                high: meta.regularMarketDayHigh,
+                low: meta.regularMarketDayLow,
+                volume: meta.regularMarketVolume,
+            };
+
+            console.log(`✅ Stock data fetched: ${symbol} = $${stockData.price}`);
+            res.json(stockData);
+        } else {
+            res.status(404).json({ error: 'Stock not found' });
+        }
+    } catch (error) {
+        console.error('❌ Stock API Error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 📰 WECHAT ARTICLE API - 微信公众号文章解析
+app.post('/api/wechat/article', async (req, res) => {
+    try {
+        const { url } = req.body;
+
+        // 验证参数
+        if (!url) {
+            return res.status(400).json({ error: 'Missing required parameter: url' });
+        }
+
+        console.log(`📰 Parsing WeChat article: ${url.substring(0, 50)}...`);
+
+        // 从环境变量读取 API Key
+        const API_KEY = process.env.DAJIALA_API_KEY;
+
+        if (!API_KEY) {
+            console.warn('⚠️ DAJIALA_API_KEY not configured in backend/.env');
+            return res.status(500).json({
+                error: 'API Key not configured',
+                message: 'Please add DAJIALA_API_KEY to backend/.env'
+            });
+        }
+
+        // 调用 dajiala API
+        const response = await fetch('https://www.dajiala.com/fbmain/monitor/v3/article_detail', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                url: url,
+                key: API_KEY,
+                verifycode: ""
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Dajiala API returned ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        console.log(`✅ Article parsed successfully`);
+
+        // 返回解析结果
+        res.json(data);
+
+    } catch (error) {
+        console.error('❌ WeChat Article API Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // 启动服务器
 app.listen(PORT, () => {
     console.log(`🚀 Backend server running on http://localhost:${PORT}`);
@@ -267,4 +398,9 @@ process.on('SIGTERM', async () => {
         await pool.end();
     }
     process.exit(0);
+});
+
+// 测试自动重启
+app.get('/api/test-auto-restart', (req, res) => {
+    res.json({ message: 'Auto restart works!' });
 });

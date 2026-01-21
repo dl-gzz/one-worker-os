@@ -696,7 +696,6 @@ class AgentShapeUtil extends BaseBoxShapeUtil {
 
 // REGISTER CUSTOM SHAPES
 import { customShapeUtils as externalShapeUtils } from './shapes/registry';
-import { RedSquareShapeUtil } from './shapes/RedSquareShape';
 
 // ... (Retain locally defined shapes like Preview, Agent, Result)
 
@@ -706,7 +705,6 @@ const customShapeUtils = [
     PreviewShapeUtil,
     AgentShapeUtil,
     ResultShapeUtil,
-    RedSquareShapeUtil,
     ...externalShapeUtils
 ];
 
@@ -1547,7 +1545,7 @@ function BoardLogic() {
     // -------------------------------------------------------------------------
     // 🧠 AI SYSTEM PROMPT
     // -------------------------------------------------------------------------
-        const SYSTEM_PROMPT = `You are an expert Courseware Designer & Developer.
+    const SYSTEM_PROMPT = `You are an expert Courseware Designer & Developer.
 You specialize in creating interactive, visually stunning educational tools.
 
 🎓 EXPERTISE: Instructional Design, Visual Design, Interactive Components, Presentation Tools
